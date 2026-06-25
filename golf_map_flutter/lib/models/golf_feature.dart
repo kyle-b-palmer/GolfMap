@@ -1,3 +1,5 @@
+import 'package:latlong2/latlong.dart';
+
 import 'measurement_chain.dart';
 
 class GolfFeature {
@@ -86,10 +88,15 @@ class DistanceInfo {
 }
 
 class BunkerDistance {
-  const BunkerDistance({required this.label, required this.yards});
+  const BunkerDistance({
+    required this.label,
+    required this.yards,
+    this.point,
+  });
 
   final String label;
   final int yards;
+  final LatLng? point;
 }
 
 class HoleStats {

@@ -474,6 +474,77 @@ List<LatLng> holeEncirclementRing(
   return ring;
 }
 
+/// Meters from [point] to the nearest edge of the hole encirclement ring (0 if inside).
+double distanceOutsideHoleEncirclementMeters(
+  LatLng point,
+  List<GolfFeature> features,
+  String? course,
+  String hole,
+) {
+  final ring = holeEncirclementRing(features, course, hole);
+  if (ring.length < 3) return 0;
+  if (_isPointInRing(point, ring)) return 0;
+
+  var minDist = double.infinity;
+  for (var i = 0; i < ring.length; i++) {
+    final a = ring[i];
+    final b = ring[(i + 1) % ring.length];
+    final d = _distancePointToSegmentMeters(point, a, b);
+    if (d < minDist) minDist = d;
+  }
+  return minDist;
+}
+
+double _distancePointToSegmentMeters(LatLng p, LatLng a, LatLng b) {
+  final ab = distanceMeters(a, b);
+  if (ab < 0.001) return distanceMeters(p, a);
+
+  final ap = distanceMeters(a, p);
+  final along = ap *
+      math.cos(
+        _bearingDiffRadians(bearingBetween(a, b), bearingBetween(a, p)),
+      );
+
+  if (along <= 0) return ap;
+  if (along >= ab) return distanceMeters(p, b);
+
+  return ap *
+      math.sin(
+        _bearingDiffRadians(bearingBetween(a, b), bearingBetween(a, p)),
+      ).abs();
+}
+
+/// GPS is usable when inside the hole oval or only slightly outside it.
+bool isGpsWithinHolePlayArea(
+  LatLng user,
+  List<GolfFeature> features,
+  String? course,
+  String hole, {
+  double significantOutsideMeters = 45,
+}) {
+  final ring = holeEncirclementRing(features, course, hole);
+  if (ring.length < 3) {
+    final holeFeatures =
+        features.where((f) => f.isActive(course, hole)).toList();
+    return isUserNearHole(user, holeFeatures);
+  }
+
+  return distanceOutsideHoleEncirclementMeters(user, features, course, hole) <=
+      significantOutsideMeters;
+}
+
+/// Whether [point] lies inside the hole encirclement ellipse.
+bool isPointInHoleEncirclement(
+  LatLng point,
+  List<GolfFeature> features,
+  String? course,
+  String hole,
+) {
+  final ring = holeEncirclementRing(features, course, hole);
+  if (ring.length < 3) return true;
+  return _isPointInRing(point, ring);
+}
+
 double _bearingDiffRadians(double fromBearing, double toBearing) {
   var diff = (toBearing - fromBearing) % 360;
   if (diff > 180) diff -= 360;
@@ -545,17 +616,34 @@ double _backOfGreenMeters(
   LatLng greenCenter,
   List<GolfFeature> holeFeatures,
 ) {
-  final approach = bearingBetween(from, greenCenter);
-  var maxAlong = 0.0;
+  final back = backOfGreenPoint(from, holeFeatures);
+  if (back == null) return 0;
+  return distanceMeters(from, back);
+}
+
+/// Back edge of the green along the approach from [from] (tee / GPS).
+LatLng? backOfGreenPoint(
+  LatLng from,
+  List<GolfFeature> holeFeatures,
+) {
+  final center = greenCenterForHole(holeFeatures);
+  if (center == null) return null;
+
+  final approach = bearingBetween(from, center);
+  LatLng? back;
+  var maxAlong = double.negativeInfinity;
 
   for (final point in _greenBoundarySamplePoints(holeFeatures)) {
     final dist = distanceMeters(from, point);
     final pointBearing = bearingBetween(from, point);
     final along = dist * math.cos(_bearingDiffRadians(approach, pointBearing));
-    if (along > maxAlong) maxAlong = along;
+    if (along > maxAlong) {
+      maxAlong = along;
+      back = point;
+    }
   }
 
-  return maxAlong;
+  return back;
 }
 
 GreenYardages greenDistancesFromPoint(
@@ -650,7 +738,11 @@ List<BunkerDistance> bunkerDistancesFromPoint(
     final name = bunker.name?.trim();
     final label = (name != null && name.isNotEmpty) ? name : 'Bunker ${i + 1}';
     results.add(
-      BunkerDistance(label: label, yards: metersToYardsSigned(meters)),
+      BunkerDistance(
+        label: label,
+        yards: metersToYardsSigned(meters),
+        point: latLngFromGeometry(bunker.geometry),
+      ),
     );
   }
 
@@ -779,11 +871,15 @@ int? shotDistanceYards(
   LatLng tap,
   List<GolfFeature> holeFeatures, {
   dynamic selectedTeeFeatureId,
+  String? course,
+  String? hole,
 }) {
   final origin = shotDistanceOrigin(
     user,
     holeFeatures,
     selectedTeeFeatureId: selectedTeeFeatureId,
+    course: course,
+    hole: hole,
   );
   if (origin == null) return null;
   return metersToYards(distanceMeters(origin, tap));
@@ -793,10 +889,15 @@ LatLng? shotDistanceOrigin(
   LatLng? user,
   List<GolfFeature> holeFeatures, {
   dynamic selectedTeeFeatureId,
+  String? course,
+  String? hole,
 }) {
-  if (user != null && isUserNearHole(user, holeFeatures)) {
-    return user;
-  }
+  final useGps = user != null &&
+      (course != null && hole != null
+          ? isGpsWithinHolePlayArea(user, holeFeatures, course, hole)
+          : isUserNearHole(user, holeFeatures));
+
+  if (useGps) return user;
 
   if (selectedTeeFeatureId != null) {
     final selected = teePointById(holeFeatures, selectedTeeFeatureId);
@@ -806,8 +907,17 @@ LatLng? shotDistanceOrigin(
   return longestTeeForHole(holeFeatures);
 }
 
-bool isUsingGpsForShot(LatLng? user, List<GolfFeature> holeFeatures) {
-  return user != null && isUserNearHole(user, holeFeatures);
+bool isUsingGpsForShot(
+  LatLng? user,
+  List<GolfFeature> holeFeatures, {
+  String? course,
+  String? hole,
+}) {
+  if (user == null) return false;
+  if (course != null && hole != null) {
+    return isGpsWithinHolePlayArea(user, holeFeatures, course, hole);
+  }
+  return isUserNearHole(user, holeFeatures);
 }
 
 const kMaxPlannedShotYards = 250;

@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
@@ -15,13 +14,12 @@ import '../models/saved_round.dart';
 import '../services/golf_data_service.dart';
 import '../services/round_storage_service.dart';
 import '../utils/geo_utils.dart';
-import '../widgets/course_selector.dart';
-import '../widgets/distance_card.dart';
+import '../widgets/distance_details_sheet.dart';
 import '../widgets/golf_map_view.dart';
 import '../widgets/hole_selector.dart';
 import '../widgets/hole_stats_panel.dart';
 import '../widgets/score_panel.dart';
-import '../widgets/shot_direction_toggle.dart';
+import '../widgets/track_shot_button.dart';
 
 class GolfMapScreen extends StatefulWidget {
   const GolfMapScreen({
@@ -49,7 +47,6 @@ class _GolfMapScreenState extends State<GolfMapScreen> {
   final _mapController = MapController();
 
   List<GolfFeature> _features = [];
-  List<String> _courses = [];
   List<String> _holes = [];
   String? _selectedCourse;
   String _selectedHole = '1';
@@ -59,8 +56,8 @@ class _GolfMapScreenState extends State<GolfMapScreen> {
 
   bool _loading = true;
   bool _mapReady = false;
-  bool _showCourseDropdown = false;
-  bool _showShotDirection = false;
+  bool _idealLineEnabled = true;
+  bool _showBunkerDistancesOnMap = true;
   bool _savingRound = false;
 
   LatLng? _userCoord;
@@ -85,8 +82,20 @@ class _GolfMapScreenState extends State<GolfMapScreen> {
 
   List<TeeOption> get _teeOptions => teeOptionsForHole(_currentHoleFeatures);
 
-  bool get _usingGpsForShot =>
-      isUsingGpsForShot(_userCoord, _currentHoleFeatures);
+  bool get _usingGpsForShot => isUsingGpsForShot(
+        _userCoord,
+        _currentHoleFeatures,
+        course: _selectedCourse,
+        hole: _selectedHole,
+      );
+
+  LatLng? get _measurementOrigin => shotDistanceOrigin(
+        _userCoord,
+        _currentHoleFeatures,
+        selectedTeeFeatureId: _selectedTeeFeatureId,
+        course: _selectedCourse,
+        hole: _selectedHole,
+      );
 
   int? get _holeYardage {
     final teeId = _selectedTeeFeatureId;
@@ -96,6 +105,9 @@ class _GolfMapScreenState extends State<GolfMapScreen> {
 
   List<PinnedShot> get _currentHolePinnedShots =>
       _pinnedShots[_selectedHole] ?? const [];
+
+  bool get _showIdealLine =>
+      _lockedMeasurementPoints.isEmpty && _idealLineEnabled;
 
   @override
   void initState() {
@@ -121,13 +133,11 @@ class _GolfMapScreenState extends State<GolfMapScreen> {
   Future<void> _loadData() async {
     try {
       final features = await _dataService.fetchGolfFeatures();
-      final courses = _dataService.extractCourses(features);
 
       if (!mounted) return;
 
       setState(() {
         _features = features;
-        _courses = courses;
         _selectedCourse = widget.initialCourse;
         _loading = false;
       });
@@ -167,8 +177,8 @@ class _GolfMapScreenState extends State<GolfMapScreen> {
       });
       if (_lockedMeasurementPoints.isNotEmpty) {
         _recalculateMeasurementChain();
-        _refreshMeasurementDisplay();
       }
+      _refreshMeasurementDisplay();
     });
   }
 
@@ -187,7 +197,12 @@ class _GolfMapScreenState extends State<GolfMapScreen> {
     for (final hole in holes) {
       final key = _scoreKey(course, hole);
       if (!_scores.containsKey(key)) {
-        _scores[key] = widget.initialScores?[hole] ?? 0;
+        final saved = widget.initialScores?[hole];
+        if (saved != null) {
+          _scores[key] = saved;
+        } else {
+          _scores[key] = 0;
+        }
       }
     }
 
@@ -200,8 +215,8 @@ class _GolfMapScreenState extends State<GolfMapScreen> {
 
     if (_lockedMeasurementPoints.isNotEmpty) {
       _recalculateMeasurementChain();
-      _refreshMeasurementDisplay();
     }
+    _refreshMeasurementDisplay();
 
     _focusOnHole();
   }
@@ -281,17 +296,14 @@ class _GolfMapScreenState extends State<GolfMapScreen> {
       _shotOrigin = null;
       _lockedMeasurementPoints.clear();
       _selectedMeasurementPinIndex = null;
+      _idealLineEnabled = true;
     });
   }
 
   void _recalculateMeasurementChain() {
     if (_lockedMeasurementPoints.isEmpty) return;
 
-    final origin = shotDistanceOrigin(
-      _userCoord,
-      _currentHoleFeatures,
-      selectedTeeFeatureId: _selectedTeeFeatureId,
-    );
+    final origin = _measurementOrigin;
     if (origin == null) return;
 
     final updated = <MeasurementChainPoint>[];
@@ -317,11 +329,7 @@ class _GolfMapScreenState extends State<GolfMapScreen> {
 
   void _addMeasurementChainPoint(LatLng point) {
     final holeFeatures = _currentHoleFeatures;
-    final origin = shotDistanceOrigin(
-      _userCoord,
-      holeFeatures,
-      selectedTeeFeatureId: _selectedTeeFeatureId,
-    );
+    final origin = _measurementOrigin;
     final from = _lockedMeasurementPoints.isNotEmpty
         ? _lockedMeasurementPoints.last.point
         : origin;
@@ -359,11 +367,13 @@ class _GolfMapScreenState extends State<GolfMapScreen> {
     });
   }
 
-  void _deleteSelectedMeasurementPin() {
-    final index = _selectedMeasurementPinIndex;
-    if (index == null || index < 0 || index >= _lockedMeasurementPoints.length) {
-      return;
-    }
+  void _deselectMeasurementPin() {
+    if (_selectedMeasurementPinIndex == null) return;
+    setState(() => _selectedMeasurementPinIndex = null);
+  }
+
+  void _deleteMeasurementPin(int index) {
+    if (index < 0 || index >= _lockedMeasurementPoints.length) return;
 
     setState(() {
       _lockedMeasurementPoints.removeAt(index);
@@ -371,11 +381,7 @@ class _GolfMapScreenState extends State<GolfMapScreen> {
     });
 
     if (_lockedMeasurementPoints.isEmpty) {
-      setState(() {
-        _distanceInfo = null;
-        _greenCenter = null;
-        _shotOrigin = null;
-      });
+      _refreshMeasurementDisplay();
       return;
     }
 
@@ -383,15 +389,16 @@ class _GolfMapScreenState extends State<GolfMapScreen> {
     _refreshMeasurementDisplay();
   }
 
+  void _deleteSelectedMeasurementPin() {
+    final index = _selectedMeasurementPinIndex;
+    if (index == null) return;
+    _deleteMeasurementPin(index);
+  }
+
   void _moveLockedMeasurementPoint(int index, LatLng newPoint) {
     if (index < 0 || index >= _lockedMeasurementPoints.length) return;
 
-    final holeFeatures = _currentHoleFeatures;
-    final origin = shotDistanceOrigin(
-      _userCoord,
-      holeFeatures,
-      selectedTeeFeatureId: _selectedTeeFeatureId,
-    );
+    final origin = _measurementOrigin;
 
     final updated = List<MeasurementChainPoint>.from(_lockedMeasurementPoints);
     final previous = index == 0 ? origin : updated[index - 1].point;
@@ -436,12 +443,8 @@ class _GolfMapScreenState extends State<GolfMapScreen> {
       return;
     }
 
-    final usingGps = isUsingGpsForShot(_userCoord, holeFeatures);
-    final origin = shotDistanceOrigin(
-      _userCoord,
-      holeFeatures,
-      selectedTeeFeatureId: _selectedTeeFeatureId,
-    );
+    final usingGps = _usingGpsForShot;
+    final origin = _measurementOrigin;
     final bunkerFrom = usingGps ? _userCoord : origin;
     final referencePoint =
         _lockedMeasurementPoints.lastOrNull?.point ?? origin;
@@ -525,248 +528,6 @@ class _GolfMapScreenState extends State<GolfMapScreen> {
     );
   }
 
-  Future<void> _testGps() async {
-    final serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    var permission = await Geolocator.checkPermission();
-
-    if (!serviceEnabled) {
-      if (!mounted) return;
-      await _showGpsTestDialog(
-        serviceEnabled: false,
-        permission: permission,
-      );
-      return;
-    }
-
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-    }
-
-    if (permission == LocationPermission.denied ||
-        permission == LocationPermission.deniedForever) {
-      if (!mounted) return;
-      await _showGpsTestDialog(
-        serviceEnabled: serviceEnabled,
-        permission: permission,
-      );
-      return;
-    }
-
-    try {
-      final position = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.high,
-        ),
-      );
-      final point = LatLng(position.latitude, position.longitude);
-
-      if (!mounted) return;
-      setState(() => _userCoord = point);
-      _centerMapOnUser(point);
-
-      await _showGpsTestDialog(
-        serviceEnabled: serviceEnabled,
-        permission: permission,
-        position: position,
-        point: point,
-      );
-    } catch (error) {
-      if (!mounted) return;
-      await _showGpsTestDialog(
-        serviceEnabled: serviceEnabled,
-        permission: permission,
-        errorMessage: error.toString(),
-      );
-    }
-  }
-
-  void _centerMapOnUser(LatLng point) {
-    if (!_mapReady) return;
-
-    final camera = _mapController.camera;
-    final zoom = camera.zoom < 17 ? 17.0 : camera.zoom;
-    _mapController.moveAndRotate(point, zoom, camera.rotation);
-  }
-
-  int? _nearestHoleDistanceYards(LatLng user) {
-    final holeFeatures = _currentHoleFeatures;
-    if (holeFeatures.isEmpty) return null;
-
-    var nearestMeters = double.infinity;
-    for (final feature in holeFeatures) {
-      for (final featurePoint in allPointsFromGeometry(feature.geometry)) {
-        final meters = distanceMeters(user, featurePoint);
-        if (meters < nearestMeters) nearestMeters = meters;
-      }
-    }
-
-    if (nearestMeters == double.infinity) return null;
-    return metersToYards(nearestMeters);
-  }
-
-  Future<void> _showGpsTestDialog({
-    required bool serviceEnabled,
-    required LocationPermission permission,
-    Position? position,
-    LatLng? point,
-    String? errorMessage,
-  }) async {
-    final onCourse = point != null &&
-        isUserNearHole(point, _currentHoleFeatures);
-    final usingGps = point != null &&
-        isUsingGpsForShot(point, _currentHoleFeatures);
-    final nearestYards = point != null ? _nearestHoleDistanceYards(point) : null;
-
-    String permissionLabel;
-    switch (permission) {
-      case LocationPermission.always:
-      case LocationPermission.whileInUse:
-        permissionLabel = 'Granted';
-      case LocationPermission.denied:
-        permissionLabel = 'Denied';
-      case LocationPermission.deniedForever:
-        permissionLabel = 'Denied permanently';
-      case LocationPermission.unableToDetermine:
-        permissionLabel = 'Unknown';
-    }
-
-    await showDialog<void>(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          backgroundColor: AppTheme.panelBg,
-          title: const Text(
-            'GPS test',
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
-          ),
-          content: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (errorMessage != null) ...[
-                  Text(
-                    errorMessage,
-                    style: const TextStyle(color: Color(0xFFEF4444)),
-                  ),
-                  const SizedBox(height: 12),
-                ],
-                _gpsInfoRow('Location services', serviceEnabled ? 'On' : 'Off'),
-                _gpsInfoRow('Permission', permissionLabel),
-                if (point != null) ...[
-                  const SizedBox(height: 8),
-                  _gpsInfoRow(
-                    'Latitude',
-                    point.latitude.toStringAsFixed(6),
-                  ),
-                  _gpsInfoRow(
-                    'Longitude',
-                    point.longitude.toStringAsFixed(6),
-                  ),
-                  if (position != null)
-                    _gpsInfoRow(
-                      'Accuracy',
-                      '±${position.accuracy.toStringAsFixed(1)} m',
-                    ),
-                  if (position?.altitude != null)
-                    _gpsInfoRow(
-                      'Altitude',
-                      '${position!.altitude.toStringAsFixed(1)} m',
-                    ),
-                  _gpsInfoRow(
-                    'On current hole',
-                    onCourse ? 'Yes' : 'No',
-                  ),
-                  _gpsInfoRow(
-                    'Using GPS for yardages',
-                    usingGps ? 'Yes' : 'No (using tee)',
-                  ),
-                  if (nearestYards != null)
-                    _gpsInfoRow(
-                      'Nearest hole feature',
-                      '$nearestYards yds',
-                    ),
-                ] else if (errorMessage == null) ...[
-                  const SizedBox(height: 8),
-                  const Text(
-                    'Enable location services and grant permission to read GPS.',
-                    style: TextStyle(color: AppTheme.textMuted, height: 1.4),
-                  ),
-                ],
-                if (kIsWeb) ...[
-                  const SizedBox(height: 12),
-                  const Text(
-                    'On web, Chrome needs HTTPS and a location prompt.',
-                    style: TextStyle(color: AppTheme.textMuted, fontSize: 12),
-                  ),
-                ],
-              ],
-            ),
-          ),
-          actions: [
-            if (point != null)
-              TextButton(
-                onPressed: () {
-                  Clipboard.setData(
-                    ClipboardData(
-                      text:
-                          '${point.latitude.toStringAsFixed(6)}, ${point.longitude.toStringAsFixed(6)}',
-                    ),
-                  );
-                  Navigator.pop(context);
-                  ScaffoldMessenger.of(this.context).showSnackBar(
-                    const SnackBar(content: Text('Coordinates copied')),
-                  );
-                },
-                child: const Text('Copy'),
-              ),
-            if (point != null)
-              TextButton(
-                onPressed: () {
-                  Navigator.pop(context);
-                  _centerMapOnUser(point);
-                },
-                child: const Text('Center map'),
-              ),
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Close'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  Widget _gpsInfoRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 148,
-            child: Text(
-              label,
-              style: const TextStyle(color: AppTheme.textMuted, fontSize: 13),
-            ),
-          ),
-          Expanded(
-            child: Text(
-              value,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                fontFeatures: [FontFeature.tabularFigures()],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Future<void> _pinGpsShot() async {
     var point = _userCoord;
 
@@ -793,6 +554,27 @@ class _GolfMapScreenState extends State<GolfMapScreen> {
     }
 
     _addPinnedShot(point, 'GPS');
+  }
+
+  void _openDistanceDetails() {
+    final info = _distanceInfo;
+    if (info == null) return;
+
+    DistanceDetailsSheet.show(
+      context,
+      courseName: _selectedCourse ?? 'Course',
+      selectedHole: _selectedHole,
+      par: _currentHoleStats?.par ?? 0,
+      distanceInfo: info,
+      teeOptions: _teeOptions,
+      selectedTeeFeatureId: _selectedTeeFeatureId,
+      onSelectTee: _selectTee,
+      onPinShot: _pinBlueDotShot,
+      pinnedShotCount: _currentHolePinnedShots.length,
+      selectedMeasurementPinIndex: _selectedMeasurementPinIndex,
+      onSelectMeasurementPin: _selectMeasurementPin,
+      onDeleteSelectedPin: _deleteSelectedMeasurementPin,
+    );
   }
 
   void _pinBlueDotShot() {
@@ -885,6 +667,19 @@ class _GolfMapScreenState extends State<GolfMapScreen> {
     });
   }
 
+  void _handleTrackShotAction(TrackShotAction action) {
+    switch (action) {
+      case TrackShotAction.gps:
+        _pinGpsShot();
+      case TrackShotAction.mapPin:
+        _pinBlueDotShot();
+      case TrackShotAction.shotLine:
+        if (_lockedMeasurementPoints.isEmpty) {
+          setState(() => _idealLineEnabled = !_idealLineEnabled);
+        }
+    }
+  }
+
   int get _currentHoleScore {
     final course = _selectedCourse;
     if (course == null) return 0;
@@ -898,6 +693,39 @@ class _GolfMapScreenState extends State<GolfMapScreen> {
       0,
       (sum, hole) => sum + (_scores[_scoreKey(course, hole)] ?? 0),
     );
+  }
+
+  int get _currentHoleRelativeToPar {
+    final score = _currentHoleScore;
+    final par = _currentHoleStats?.par ?? 0;
+    if (score <= 0 || par <= 0 || score == par) return 0;
+    return score - par;
+  }
+
+  int get _totalRelativeToPar {
+    final course = _selectedCourse;
+    if (course == null) return 0;
+    return _holes.fold<int>(0, (sum, hole) {
+      final score = _scores[_scoreKey(course, hole)] ?? 0;
+      if (score <= 0) return sum;
+      final par = _dataService.statsForHole(_features, course, hole)?.par ?? 0;
+      if (par <= 0) return sum;
+      return sum + (score - par);
+    });
+  }
+
+  List<HoleScoreLine> get _scorecardLines {
+    final course = _selectedCourse;
+    if (course == null) return const [];
+
+    return [
+      for (final hole in _holes)
+        HoleScoreLine(
+          hole: hole,
+          par: _dataService.statsForHole(_features, course, hole)?.par ?? 0,
+          score: _scores[_scoreKey(course, hole)] ?? 0,
+        ),
+    ];
   }
 
   Future<void> _saveRound() async {
@@ -983,7 +811,7 @@ class _GolfMapScreenState extends State<GolfMapScreen> {
             features: _features,
             selectedCourse: _selectedCourse,
             selectedHole: _selectedHole,
-            showShotDirection: _showShotDirection,
+            showShotDirection: _showIdealLine,
             greenCenter: _greenCenter,
             shotOrigin: _shotOrigin,
             userCoord: _userCoord,
@@ -993,6 +821,7 @@ class _GolfMapScreenState extends State<GolfMapScreen> {
             onLockedMeasurementDrag: _handleLockedMeasurementDrag,
             onLockedMeasurementDragEnd: _handleLockedMeasurementDragEnd,
             onSelectMeasurementPin: _selectMeasurementPin,
+            onDeselectMeasurementPin: _deselectMeasurementPin,
             selectedMeasurementPinIndex: _selectedMeasurementPinIndex,
             onSelectTee: _selectTee,
             onMapReady: () {
@@ -1001,6 +830,11 @@ class _GolfMapScreenState extends State<GolfMapScreen> {
             },
             pinnedShots: _currentHolePinnedShots,
             lockedMeasurementPoints: _lockedMeasurementPoints,
+            greenYardages: _distanceInfo?.greenYardages,
+            showGreenYardageCallout: true,
+            bunkerDistances: _showBunkerDistancesOnMap
+                ? (_distanceInfo?.bunkerDistances ?? const [])
+                : const [],
           ),
         ),
         Positioned(
@@ -1019,213 +853,154 @@ class _GolfMapScreenState extends State<GolfMapScreen> {
                       label: 'Home',
                       onTap: () => Navigator.pop(context, false),
                     ),
-                    const Spacer(),
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        child: Text(
+                          (_selectedCourse ?? 'Course').toUpperCase(),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: AppTheme.accentGreen,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.6,
+                            height: 1.15,
+                            shadows: [
+                              Shadow(
+                                color: AppTheme.accentGreen.withValues(
+                                  alpha: 0.45,
+                                ),
+                                blurRadius: 8,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
                     _MapActionButton(
                       icon: Icons.save_rounded,
-                      label: _savingRound ? 'Saving...' : 'Save',
+                      label: _savingRound ? 'Saving...' : 'Save Round',
                       emphasized: true,
                       onTap: _savingRound ? null : _saveRound,
                     ),
                   ],
                 ),
                 const SizedBox(height: 10),
-                CourseSelector(
-                  courses: _courses,
-                  selectedCourse: _selectedCourse,
-                  showDropdown: _showCourseDropdown,
-                  onToggleDropdown: () {
-                    setState(() {
-                      _showCourseDropdown = !_showCourseDropdown;
-                    });
-                  },
-                  onSelectCourse: (course) {
-                    setState(() {
-                      _selectedCourse = course;
-                      _showCourseDropdown = false;
-                    });
+                HoleSelector(
+                  holes: _holes,
+                  selectedHole: _selectedHole,
+                  onSelectHole: (hole) {
+                    setState(() => _selectedHole = hole);
                     _clearDistance();
                     _refreshHoleState();
                   },
                 ),
-                if (!_showCourseDropdown) ...[
-                  const SizedBox(height: 10),
-                  HoleSelector(
-                    holes: _holes,
-                    selectedHole: _selectedHole,
-                    onSelectHole: (hole) {
-                      setState(() => _selectedHole = hole);
-                      _clearDistance();
-                      _refreshHoleState();
-                    },
-                  ),
-                ],
               ],
             ),
           ),
         ),
-        if (_currentHoleStats != null && !_showCourseDropdown)
+        if (_currentHoleStats != null)
           Positioned(
-            top: kIsWeb ? 198 : 183,
+            top: kIsWeb ? 132 : 117,
             right: 15,
-            child: HoleStatsPanel(
-              stats: _currentHoleStats!,
-              yardage: _holeYardage,
-            ),
-          ),
-        if (!_showCourseDropdown)
-          Positioned(
-            left: 15,
-            bottom: 290,
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
               children: [
-                _PinShotButton(
-                  label: 'Test GPS',
-                  icon: _userCoord != null
-                      ? Icons.my_location_rounded
-                      : Icons.location_searching_rounded,
-                  accentColor: const Color(0xFF34A853),
-                  enabled: true,
-                  onPin: _testGps,
+                HoleStatsPanel(
+                  stats: _currentHoleStats!,
+                  yardage: _holeYardage,
+                  greenYardages: _distanceInfo?.greenYardages,
+                  showBunkerDistancesOnMap: _showBunkerDistancesOnMap,
+                  onToggleBunkerDistancesOnMap: (value) {
+                    setState(() => _showBunkerDistancesOnMap = value);
+                  },
+                  onOpenDetails: _distanceInfo == null
+                      ? null
+                      : _openDistanceDetails,
                 ),
-                const SizedBox(height: 8),
-                _PinShotButton(
-                  label: 'Pin shot ${_currentHolePinnedShots.length + 1} (GPS)',
-                  icon: _userCoord != null
-                      ? Icons.gps_fixed_rounded
-                      : Icons.gps_not_fixed_rounded,
-                  accentColor: const Color(0xFFFF9800),
-                  enabled: true,
-                  onPin: _pinGpsShot,
-                ),
-                const SizedBox(height: 8),
-                _PinShotButton(
-                  label:
-                      'Pin shot ${_currentHolePinnedShots.length + 1} (map)',
-                  icon: Icons.place_rounded,
-                  accentColor: AppTheme.measureBlue,
-                  enabled: _lockedMeasurementPoints.isNotEmpty,
-                  onPin: _pinBlueDotShot,
-                ),
-                if (_currentHolePinnedShots.isNotEmpty) ...[
+                if (_selectedMeasurementPinIndex != null) ...[
                   const SizedBox(height: 8),
-                  _PinShotButton(
-                    label: 'Clear pins (${_currentHolePinnedShots.length})',
-                    icon: Icons.clear_rounded,
-                    accentColor: const Color(0xFFEF4444),
-                    enabled: true,
-                    onPin: _clearPinnedShots,
+                  _DeleteNodeButton(
+                    onTap: () =>
+                        _deleteMeasurementPin(_selectedMeasurementPinIndex!),
                   ),
                 ],
               ],
-            ),
-          ),
-        if (!_showCourseDropdown)
-          Positioned(
-            left: 15,
-            bottom: 130,
-            child: ShotDirectionToggle(
-              showShotDirection: _showShotDirection,
-              onToggle: () {
-                setState(() => _showShotDirection = !_showShotDirection);
-              },
             ),
           ),
         Positioned(
           left: 15,
           right: 15,
-          bottom: 16,
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 520),
-              child: ScorePanel(
-                selectedHole: _selectedHole,
-                currentHoleScore: _currentHoleScore,
-                totalScore: _totalScore,
-                onDecrement: () => _updateScore(-1),
-                onIncrement: () => _updateScore(1),
+          bottom: MediaQuery.paddingOf(context).bottom + 6,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TrackShotButton(
+                  shotLineEnabled: _showIdealLine,
+                  mapPinEnabled: _lockedMeasurementPoints.isNotEmpty,
+                  pinnedShotCount: _currentHolePinnedShots.length,
+                  onClearPins: _currentHolePinnedShots.isNotEmpty
+                      ? _clearPinnedShots
+                      : null,
+                  onAction: _handleTrackShotAction,
+                ),
               ),
-            ),
+              const SizedBox(height: 8),
+              Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 520),
+                  child: ScorePanel(
+                    selectedHole: _selectedHole,
+                    par: _currentHoleStats?.par ?? 0,
+                    currentHoleScore: _currentHoleScore,
+                    totalScore: _totalScore,
+                    scorecardLines: _scorecardLines,
+                    holeRelativeToPar: _currentHoleRelativeToPar,
+                    totalRelativeToPar: _totalRelativeToPar,
+                    onDecrement: () => _updateScore(-1),
+                    onIncrement: () => _updateScore(1),
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
-        if (_distanceInfo != null)
-          Positioned(
-            top: kIsWeb ? 203 : 188,
-            left: 15,
-            child: DistanceCard(
-              distanceInfo: _distanceInfo!,
-              teeOptions: _teeOptions,
-              selectedTeeFeatureId: _selectedTeeFeatureId,
-              onSelectTee: _selectTee,
-              onClear: _clearDistance,
-              onPinShot: _pinBlueDotShot,
-              selectedMeasurementPinIndex: _selectedMeasurementPinIndex,
-              onSelectMeasurementPin: _selectMeasurementPin,
-              onDeleteSelectedPin: _deleteSelectedMeasurementPin,
-              pinnedShotCount: _currentHolePinnedShots.length,
-            ),
-          ),
       ],
     );
   }
 }
 
-class _PinShotButton extends StatelessWidget {
-  const _PinShotButton({
-    required this.label,
-    required this.icon,
-    required this.accentColor,
-    required this.enabled,
-    required this.onPin,
-  });
+class _DeleteNodeButton extends StatelessWidget {
+  const _DeleteNodeButton({required this.onTap});
 
-  final String label;
-  final IconData icon;
-  final Color accentColor;
-  final bool enabled;
-  final VoidCallback onPin;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: accentColor.withValues(alpha: 0.2),
-      borderRadius: BorderRadius.circular(12),
-      child: InkWell(
-        onTap: enabled ? onPin : null,
-        borderRadius: BorderRadius.circular(12),
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: Material(
+        color: const Color(0xE61A1A22),
+        elevation: 4,
+        shadowColor: Colors.black54,
+        shape: const CircleBorder(),
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+          width: 40,
+          height: 40,
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: enabled ? accentColor : AppTheme.panelBorder,
-            ),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x33000000),
-                blurRadius: 8,
-                offset: Offset(0, 2),
-              ),
-            ],
+            shape: BoxShape.circle,
+            border: Border.all(color: const Color(0xFFEF4444), width: 1.5),
           ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                icon,
-                color: enabled ? accentColor : AppTheme.textMuted,
-                size: 17,
-              ),
-              const SizedBox(width: 7),
-              Text(
-                label,
-                style: TextStyle(
-                  color: enabled ? accentColor : AppTheme.textMuted,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ],
+          child: const Icon(
+            Icons.delete_outline_rounded,
+            color: Color(0xFFEF4444),
+            size: 20,
           ),
         ),
       ),

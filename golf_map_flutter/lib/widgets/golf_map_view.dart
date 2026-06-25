@@ -1,3 +1,6 @@
+import 'dart:ui' as ui;
+
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
@@ -27,11 +30,15 @@ class GolfMapView extends StatefulWidget {
     required this.onLockedMeasurementDrag,
     required this.onLockedMeasurementDragEnd,
     required this.onSelectMeasurementPin,
+    required this.onDeselectMeasurementPin,
     required this.onSelectTee,
     required this.onMapReady,
     this.pinnedShots = const [],
     this.lockedMeasurementPoints = const [],
     this.selectedMeasurementPinIndex,
+    this.greenYardages,
+    this.bunkerDistances = const [],
+    this.showGreenYardageCallout = false,
   });
 
   final MapController mapController;
@@ -48,11 +55,15 @@ class GolfMapView extends StatefulWidget {
   final void Function(int index, LatLng point) onLockedMeasurementDrag;
   final void Function(int index, LatLng point) onLockedMeasurementDragEnd;
   final void Function(int index) onSelectMeasurementPin;
+  final VoidCallback onDeselectMeasurementPin;
   final void Function(dynamic featureId) onSelectTee;
   final VoidCallback onMapReady;
   final List<PinnedShot> pinnedShots;
   final List<MeasurementChainPoint> lockedMeasurementPoints;
   final int? selectedMeasurementPinIndex;
+  final GreenYardages? greenYardages;
+  final List<BunkerDistance> bunkerDistances;
+  final bool showGreenYardageCallout;
 
   @override
   State<GolfMapView> createState() => _GolfMapViewState();
@@ -64,9 +75,10 @@ class _GolfMapViewState extends State<GolfMapView> {
   Offset? _panAnchorScreen;
   DateTime? _lastDragNotify;
   List<Widget> _baseLayers = [];
+  double _calloutZoom = 15;
 
-  static const _lockedHitTarget = 52.0;
-  static const _lockedPinHitPixels = 52.0;
+  static const _lockedHitTarget = 30.0;
+  static const _lockedPinHitPixels = 30.0;
   static const _dragNotifyInterval = Duration(milliseconds: 50);
 
   bool get _isDragging => _draggingLockedIndex != null;
@@ -181,6 +193,51 @@ class _GolfMapViewState extends State<GolfMapView> {
     widget.onLockedMeasurementDrag(index, point);
   }
 
+  bool get _pinInteractionActive =>
+      _isDragging || widget.selectedMeasurementPinIndex != null;
+
+  void _beginLockedPinDrag(int index) {
+    if (widget.selectedMeasurementPinIndex != index) {
+      widget.onSelectMeasurementPin(index);
+    }
+    final anchor = widget.lockedMeasurementPoints[index].point;
+    final screen = widget.mapController.camera.latLngToScreenOffset(anchor);
+    setState(() {
+      _draggingLockedIndex = index;
+      _dragLockedCoord = anchor;
+      _panAnchorScreen = screen;
+      _lastDragNotify = null;
+    });
+  }
+
+  void _updateLockedPinDrag(int index, DragUpdateDetails details) {
+    if (_draggingLockedIndex != index) return;
+    final anchor = _panAnchorScreen;
+    if (anchor == null) return;
+    final nextScreen = anchor + details.delta;
+    final updated = _screenOffsetToLatLng(nextScreen);
+    if (updated == null) return;
+    setState(() {
+      _panAnchorScreen = nextScreen;
+      _dragLockedCoord = updated;
+    });
+    _notifyLockedDrag(index, updated);
+  }
+
+  void _endLockedPinDrag(int index) {
+    if (_draggingLockedIndex != index) return;
+    final finalCoord =
+        _dragLockedCoord ?? widget.lockedMeasurementPoints[index].point;
+    setState(() {
+      _draggingLockedIndex = null;
+      _dragLockedCoord = null;
+      _panAnchorScreen = null;
+      _lastDragNotify = null;
+    });
+    _notifyLockedDrag(index, finalCoord, force: true);
+    widget.onLockedMeasurementDragEnd(index, finalCoord);
+  }
+
   Marker _draggableLockedMeasurementMarker(
     int index,
     LatLng point,
@@ -192,59 +249,27 @@ class _GolfMapViewState extends State<GolfMapView> {
       width: _lockedHitTarget,
       height: _lockedHitTarget,
       alignment: Alignment.center,
-      child: GestureDetector(
+      child: RawGestureDetector(
         behavior: HitTestBehavior.opaque,
-        onTap: () => widget.onSelectMeasurementPin(index),
-        onPanStart: (details) {
-          final anchor = widget.lockedMeasurementPoints[index].point;
-          final screen =
-              widget.mapController.camera.latLngToScreenOffset(anchor);
-          setState(() {
-            _draggingLockedIndex = index;
-            _dragLockedCoord = anchor;
-            _panAnchorScreen = screen;
-            _lastDragNotify = null;
-          });
-        },
-        onPanUpdate: (details) {
-          if (_draggingLockedIndex != index) return;
-          final anchor = _panAnchorScreen;
-          if (anchor == null) return;
-          final nextScreen = anchor + details.delta;
-          final updated = _screenOffsetToLatLng(nextScreen);
-          if (updated == null) return;
-          setState(() {
-            _panAnchorScreen = nextScreen;
-            _dragLockedCoord = updated;
-          });
-          _notifyLockedDrag(index, updated);
-        },
-        onPanEnd: (_) {
-          if (_draggingLockedIndex != index) return;
-          final finalCoord = _dragLockedCoord;
-          setState(() {
-            _draggingLockedIndex = null;
-            _dragLockedCoord = null;
-            _panAnchorScreen = null;
-            _lastDragNotify = null;
-          });
-          if (finalCoord != null) {
-            _notifyLockedDrag(index, finalCoord, force: true);
-            widget.onLockedMeasurementDragEnd(index, finalCoord);
-          }
-        },
-        onPanCancel: () {
-          if (_draggingLockedIndex != index) return;
-          final finalCoord =
-              _dragLockedCoord ?? widget.lockedMeasurementPoints[index].point;
-          setState(() {
-            _draggingLockedIndex = null;
-            _dragLockedCoord = null;
-            _panAnchorScreen = null;
-            _lastDragNotify = null;
-          });
-          _notifyLockedDrag(index, finalCoord, force: true);
-          widget.onLockedMeasurementDragEnd(index, finalCoord);
+        gestures: <Type, GestureRecognizerFactory>{
+          _EagerPanGestureRecognizer:
+              GestureRecognizerFactoryWithHandlers<_EagerPanGestureRecognizer>(
+            _EagerPanGestureRecognizer.new,
+            (recognizer) {
+              recognizer.onStart = (_) => _beginLockedPinDrag(index);
+              recognizer.onUpdate =
+                  (details) => _updateLockedPinDrag(index, details);
+              recognizer.onEnd = (_) => _endLockedPinDrag(index);
+              recognizer.onCancel = () => _endLockedPinDrag(index);
+            },
+          ),
+          TapGestureRecognizer:
+              GestureRecognizerFactoryWithHandlers<TapGestureRecognizer>(
+            TapGestureRecognizer.new,
+            (recognizer) {
+              recognizer.onTap = () => widget.onSelectMeasurementPin(index);
+            },
+          ),
         },
         child: _LockedMeasurementMarker(
           shotNumber: shotNumber,
@@ -259,6 +284,11 @@ class _GolfMapViewState extends State<GolfMapView> {
   void initState() {
     super.initState();
     _rebuildBaseLayers();
+  }
+
+  void _updateCalloutZoom(double zoom) {
+    if ((zoom - _calloutZoom).abs() < 0.12 || !mounted) return;
+    setState(() => _calloutZoom = zoom);
   }
 
   @override
@@ -282,9 +312,9 @@ class _GolfMapViewState extends State<GolfMapView> {
 
   void _rebuildBaseLayers() {
     final courseOnly = AppConfig.mapBackground == MapBackground.courseOnly;
-    final inactiveFairwayOpacity = courseOnly ? 0.18 : 0.05;
-    final inactiveGreenOpacity = courseOnly ? 0.12 : 0.1;
-    final inactiveBunkerOpacity = courseOnly ? 0.15 : 0.1;
+    final inactiveFairwayOpacity = courseOnly ? 0.07 : 0.03;
+    final inactiveGreenOpacity = courseOnly ? 0.05 : 0.03;
+    final inactiveBunkerOpacity = courseOnly ? 0.06 : 0.035;
 
     _baseLayers = [
       if (AppConfig.mapBackground == MapBackground.openStreetMap)
@@ -327,7 +357,27 @@ class _GolfMapViewState extends State<GolfMapView> {
         initialZoom: 15,
         onTap: (_, point) {
           if (_isDragging) return;
-          if (_lockedPinIndexNearTap(point) != null) return;
+
+          final pinIndex = _lockedPinIndexNearTap(point);
+          if (pinIndex != null) {
+            widget.onSelectMeasurementPin(pinIndex);
+            return;
+          }
+
+          final insideHole = isPointInHoleEncirclement(
+            point,
+            widget.features,
+            widget.selectedCourse,
+            widget.selectedHole,
+          );
+
+          if (widget.selectedMeasurementPinIndex != null && !insideHole) {
+            widget.onDeselectMeasurementPin();
+            return;
+          }
+
+          if (!insideHole) return;
+
           if (!widget.usingGpsForShot) {
             final teeId = _teeIdNearTap(point);
             if (teeId != null) {
@@ -338,9 +388,12 @@ class _GolfMapViewState extends State<GolfMapView> {
           widget.onTap(point);
         },
         onMapReady: widget.onMapReady,
+        onPositionChanged: (camera, _) => _updateCalloutZoom(camera.zoom),
         interactionOptions: InteractionOptions(
-          flags: _isDragging
-              ? InteractiveFlag.pinchZoom | InteractiveFlag.rotate
+          flags: _pinInteractionActive
+              ? InteractiveFlag.pinchZoom |
+                  InteractiveFlag.rotate |
+                  InteractiveFlag.doubleTapZoom
               : InteractiveFlag.all,
         ),
       ),
@@ -361,6 +414,12 @@ class _GolfMapViewState extends State<GolfMapView> {
           ..._buildMeasurementLayers(),
         if (widget.lockedMeasurementPoints.isNotEmpty)
           _uprightMarkerLayer(_buildLockedMeasurementMarkers()),
+        if (widget.showGreenYardageCallout &&
+            widget.greenYardages != null &&
+            widget.greenCenter != null)
+          _uprightMarkerLayer([_buildGreenYardageCallout()]),
+        if (widget.bunkerDistances.isNotEmpty)
+          _uprightMarkerLayer(_buildBunkerDistanceMarkers()),
       ],
     );
   }
@@ -504,27 +563,6 @@ class _GolfMapViewState extends State<GolfMapView> {
     final terminal = _chainTerminal;
     if (terminal != null && widget.greenCenter != null) {
       _addSegmentLine(lines, terminal, widget.greenCenter!, dashed: false);
-
-      final toPinYards =
-          metersToYards(distanceMeters(terminal, widget.greenCenter!));
-      markers.add(
-        Marker(
-          point: LatLng(
-            (terminal.latitude + widget.greenCenter!.latitude) / 2,
-            (terminal.longitude + widget.greenCenter!.longitude) / 2,
-          ),
-          width: 80,
-          height: 22,
-          alignment: Alignment.center,
-          child: _ShotDistanceLabel(
-            yards: toPinYards,
-            shotNumber: null,
-            borderColor: AppTheme.accentGreen,
-            textColor: const Color(0xFF81C784),
-            suffix: 'pin',
-          ),
-        ),
-      );
     }
 
     if (lines.isEmpty) return [];
@@ -532,6 +570,90 @@ class _GolfMapViewState extends State<GolfMapView> {
       PolylineLayer(polylines: lines),
       if (markers.isNotEmpty) _uprightMarkerLayer(markers),
     ];
+  }
+
+  List<Marker> _buildBunkerDistanceMarkers() {
+    final markers = <Marker>[];
+    for (final bunker in widget.bunkerDistances) {
+      if (bunker.point == null || bunker.yards <= 0) continue;
+      markers.add(
+        Marker(
+          point: bunker.point!,
+          width: 52,
+          height: 22,
+          alignment: Alignment.center,
+          child: _ShotDistanceLabel(
+            yards: bunker.yards,
+            borderColor: const Color(0xFFD4B86A),
+            textColor: const Color(0xFFF5E6B8),
+          ),
+        ),
+      );
+    }
+    return markers;
+  }
+
+  static const _calloutBaseWidth = 112.0;
+  static const _calloutBaseHeight = 54.0;
+
+  double _greenCalloutScale() {
+    final zoom = _calloutZoom;
+    if (zoom >= 18) return 1.0;
+    if (zoom <= 13) return 0.55;
+    return 0.55 + (zoom - 13) / 5 * 0.45;
+  }
+
+  LatLng? _greenCalloutAnchor() {
+    final green = widget.greenCenter;
+    if (green == null) return null;
+
+    final holeFeatures = widget.features
+        .where((f) => f.isActive(widget.selectedCourse, widget.selectedHole))
+        .toList();
+    final reference =
+        widget.shotOrigin ?? longestTeeForHole(holeFeatures);
+    if (reference == null) return green;
+
+    return backOfGreenPoint(reference, holeFeatures) ?? green;
+  }
+
+  Marker _buildGreenYardageCallout() {
+    final yardages = widget.greenYardages!;
+    final anchor = _greenCalloutAnchor() ?? widget.greenCenter!;
+    final scale = _greenCalloutScale();
+    final width = _calloutBaseWidth * scale;
+    final height = _calloutBaseHeight * scale;
+
+    return Marker(
+      point: anchor,
+      width: width,
+      height: height,
+      // flutter_map: topCenter places the geographic point at the widget bottom.
+      alignment: Alignment.topCenter,
+      child: SizedBox(
+        width: width,
+        height: height,
+        child: FittedBox(
+          fit: BoxFit.contain,
+          alignment: Alignment.bottomCenter,
+          child: SizedBox(
+            width: _calloutBaseWidth,
+            height: _calloutBaseHeight,
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.end,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _GreenYardageCallout(yardages: yardages),
+                CustomPaint(
+                  size: const Size(14, 9),
+                  painter: const _CalloutTailPainter(pointingUp: false),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   List<Polyline> _buildHoleBoundaryPolylines() {
@@ -547,8 +669,10 @@ class _GolfMapViewState extends State<GolfMapView> {
       final closed = List<LatLng>.from(ring);
       if (closed.first != closed.last) closed.add(closed.first);
 
-      final opacity = active ? 1.0 : 0.2;
-      final lineWidth = encircle ? (active ? 3.0 : 2.0) : (active ? 3.0 : 1.5);
+      final opacity = active ? 1.0 : 0.08;
+      final lineWidth = encircle
+          ? (active ? 3.0 : 1.0)
+          : (active ? 3.0 : 1.0);
       final strokeColor = encircle
           ? (active ? AppTheme.measureBlueBright : AppTheme.accentGreen)
           : AppTheme.accentGreen;
@@ -636,7 +760,7 @@ class _GolfMapViewState extends State<GolfMapView> {
     for (final feature in widget.features.where((f) => f.featureType == 'tee')) {
       final isActive =
           feature.isActive(widget.selectedCourse, widget.selectedHole);
-      final opacity = isActive ? 0.55 : 0.12;
+      final opacity = isActive ? 0.55 : 0.06;
 
       for (final ring in ringsFromGeometry(feature.geometry)) {
         if (ring.length < 3) continue;
@@ -703,6 +827,8 @@ class _GolfMapViewState extends State<GolfMapView> {
       widget.userCoord,
       holeFeatures,
       selectedTeeFeatureId: widget.selectedTeeFeatureId,
+      course: widget.selectedCourse,
+      hole: widget.selectedHole,
     );
     if (start == null) return [];
 
@@ -799,36 +925,60 @@ class _GolfMapViewState extends State<GolfMapView> {
     final holeFeatures = widget.features
         .where((f) => f.isActive(widget.selectedCourse, widget.selectedHole))
         .toList();
+    final teeOptions = teeOptionsForHole(holeFeatures);
     final teeLabels = {
-      for (final t in teeOptionsForHole(holeFeatures)) t.featureId: t.label,
+      for (final t in teeOptions) t.featureId: t.label,
     };
 
-    for (final feature in widget.features.where((f) => f.featureType == 'tee')) {
-      if (!feature.isActive(widget.selectedCourse, widget.selectedHole)) continue;
-      final point = latLngFromGeometry(feature.geometry);
-      if (point == null) continue;
+    for (final option in teeOptions) {
+      final feature = holeFeatures
+          .where((f) => f.featureType == 'tee' && f.id == option.featureId)
+          .firstOrNull;
+      if (feature == null) continue;
 
+      final point = _teeMarkerPoint(feature) ?? option.point;
       final isSelected =
           !widget.usingGpsForShot && feature.id == widget.selectedTeeFeatureId;
-      final label = teeLabels[feature.id] ?? 'T';
+      final label = teeLabels[feature.id] ?? option.label;
 
       markers.add(
         Marker(
           point: point,
-          width: isSelected ? 40 : 28,
-          height: isSelected ? 52 : 28,
-          alignment: Alignment.topCenter,
+          width: 28,
+          height: 28,
+          alignment: Alignment.center,
           child: GestureDetector(
             onTap: widget.usingGpsForShot
                 ? null
                 : () => widget.onSelectTee(feature.id),
-            child: _TeePinMarker(label: label, isSelected: isSelected),
+            child: _TeePinMarker(
+              label: label,
+              isSelected: isSelected,
+            ),
           ),
         ),
       );
     }
 
     return markers;
+  }
+
+  LatLng? _teeMarkerPoint(GolfFeature feature) {
+    final rings = ringsFromGeometry(feature.geometry);
+    if (rings.isEmpty) return latLngFromGeometry(feature.geometry);
+
+    var sumLat = 0.0;
+    var sumLng = 0.0;
+    var count = 0;
+    for (final ring in rings) {
+      for (final point in ring) {
+        sumLat += point.latitude;
+        sumLng += point.longitude;
+        count++;
+      }
+    }
+    if (count == 0) return latLngFromGeometry(feature.geometry);
+    return LatLng(sumLat / count, sumLng / count);
   }
 
   Marker _userMarker(LatLng point) {
@@ -861,22 +1011,25 @@ class _TeePinMarker extends StatelessWidget {
   final String label;
   final bool isSelected;
 
+  static String _teeLetter(String label) {
+    switch (label.toLowerCase()) {
+      case 'back':
+        return 'B';
+      case 'middle':
+        return 'M';
+      case 'front':
+        return 'F';
+      default:
+        return label.isNotEmpty ? label[0].toUpperCase() : 'T';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final short = label.isNotEmpty ? label[0].toUpperCase() : 'T';
-
-    if (isSelected) {
-      return Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const GolfBallMarker(size: 16),
-          const SizedBox(height: 2),
-          _TeeDisc(short: short, isSelected: true),
-        ],
-      );
-    }
-
-    return _TeeDisc(short: short, isSelected: false);
+    return _TeeDisc(
+      short: _teeLetter(label),
+      isSelected: isSelected,
+    );
   }
 }
 
@@ -974,14 +1127,14 @@ class _LockedMeasurementMarker extends StatelessWidget {
   Widget build(BuildContext context) {
     final highlighted = isDragging || isSelected;
     return Container(
-      width: isDragging ? 26 : (isSelected ? 24 : 22),
-      height: isDragging ? 26 : (isSelected ? 24 : 22),
+      width: isDragging ? 13 : (isSelected ? 12 : 11),
+      height: isDragging ? 13 : (isSelected ? 12 : 11),
       decoration: BoxDecoration(
         color: AppTheme.measureBlue,
         shape: BoxShape.circle,
         border: Border.all(
           color: isSelected ? const Color(0xFFFFD54F) : Colors.white,
-          width: highlighted ? 2.5 : 2,
+          width: highlighted ? 1.5 : 1,
         ),
         boxShadow: [
           BoxShadow(
@@ -990,8 +1143,8 @@ class _LockedMeasurementMarker extends StatelessWidget {
                 : isDragging
                     ? AppTheme.measureBlue.withValues(alpha: 0.55)
                     : const Color(0x66000000),
-            blurRadius: isDragging || isSelected ? 8 : 4,
-            spreadRadius: isSelected ? 2 : (isDragging ? 1 : 0),
+            blurRadius: isDragging || isSelected ? 4 : 2,
+            spreadRadius: isSelected ? 1 : (isDragging ? 0.5 : 0),
             offset: const Offset(0, 1),
           ),
         ],
@@ -1001,7 +1154,7 @@ class _LockedMeasurementMarker extends StatelessWidget {
           '$shotNumber',
           style: const TextStyle(
             color: Colors.white,
-            fontSize: 10,
+            fontSize: 7,
             fontWeight: FontWeight.w900,
             height: 1,
           ),
@@ -1061,5 +1214,145 @@ class _ShotDistanceLabel extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+class _GreenYardageCallout extends StatelessWidget {
+  const _GreenYardageCallout({required this.yardages});
+
+  final GreenYardages yardages;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: const Color(0xF0121810),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: AppTheme.accentGreen.withValues(alpha: 0.85),
+          width: 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: AppTheme.accentGreen.withValues(alpha: 0.15),
+            blurRadius: 10,
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _GreenYardageLine(
+            yards: yardages.middle,
+            label: 'Pin',
+            icon: Icons.flag_rounded,
+          ),
+          const SizedBox(height: 4),
+          _GreenYardageLine(
+            yards: yardages.front,
+            label: 'Front',
+            icon: Icons.arrow_upward_rounded,
+          ),
+          const SizedBox(height: 4),
+          _GreenYardageLine(
+            yards: yardages.back,
+            label: 'Back',
+            icon: Icons.arrow_downward_rounded,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CalloutTailPainter extends CustomPainter {
+  const _CalloutTailPainter({this.pointingUp = false});
+
+  final bool pointingUp;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final path = ui.Path();
+    if (pointingUp) {
+      path
+        ..moveTo(size.width / 2, 0)
+        ..lineTo(0, size.height)
+        ..lineTo(size.width, size.height)
+        ..close();
+    } else {
+      path
+        ..moveTo(size.width / 2, size.height)
+        ..lineTo(0, 0)
+        ..lineTo(size.width, 0)
+        ..close();
+    }
+    canvas.drawPath(
+      path,
+      Paint()..color = const Color(0xF0121810),
+    );
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = AppTheme.accentGreen.withValues(alpha: 0.85)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _CalloutTailPainter oldDelegate) =>
+      oldDelegate.pointingUp != pointingUp;
+}
+
+class _GreenYardageLine extends StatelessWidget {
+  const _GreenYardageLine({
+    required this.yards,
+    required this.label,
+    required this.icon,
+  });
+
+  final int yards;
+  final String label;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 11, color: AppTheme.accentGreen),
+        const SizedBox(width: 5),
+        Text(
+          '$yards yds',
+          style: const TextStyle(
+            color: Color(0xFFE8EAED),
+            fontSize: 9,
+            fontWeight: FontWeight.w800,
+            height: 1,
+          ),
+        ),
+        Text(
+          ' | $label',
+          style: TextStyle(
+            color: AppTheme.textMuted.withValues(alpha: 0.95),
+            fontSize: 9,
+            fontWeight: FontWeight.w600,
+            height: 1,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Claims pan gestures before flutter_map's drag handler on touch devices.
+class _EagerPanGestureRecognizer extends PanGestureRecognizer {
+  @override
+  void handleEvent(PointerEvent event) {
+    if (event is PointerDownEvent || event is PointerMoveEvent) {
+      resolve(GestureDisposition.accepted);
+    }
+    super.handleEvent(event);
   }
 }
