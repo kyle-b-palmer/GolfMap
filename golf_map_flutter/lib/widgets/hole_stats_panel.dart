@@ -2,30 +2,54 @@ import 'package:flutter/material.dart';
 
 import '../config/app_theme.dart';
 import '../models/golf_feature.dart';
+import 'hole_selector.dart';
 
 class HoleStatsPanel extends StatelessWidget {
   const HoleStatsPanel({
     super.key,
     required this.stats,
+    required this.holes,
+    required this.selectedHole,
+    required this.onSelectHole,
+    this.onNextHole,
     this.yardage,
     this.greenYardages,
     this.showBunkerDistancesOnMap = true,
     this.onToggleBunkerDistancesOnMap,
     this.onOpenDetails,
+    this.onOpenGpsToGreen,
   });
 
   final HoleStats stats;
+  final List<String> holes;
+  final String selectedHole;
+  final ValueChanged<String> onSelectHole;
+  final VoidCallback? onNextHole;
   final int? yardage;
   final GreenYardages? greenYardages;
   final bool showBunkerDistancesOnMap;
   final ValueChanged<bool>? onToggleBunkerDistancesOnMap;
   final VoidCallback? onOpenDetails;
+  final VoidCallback? onOpenGpsToGreen;
 
   @override
   Widget build(BuildContext context) {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
+        SidebarHolePicker(
+          holes: holes,
+          selectedHole: selectedHole,
+          onSelectHole: onSelectHole,
+        ),
+        if (onNextHole != null) ...[
+          const SizedBox(height: 8),
+          NextHoleButton(
+            onTap: onNextHole!,
+            enabled: holes.length > 1,
+          ),
+        ],
+        const SizedBox(height: 8),
         _StatBox(label: 'PAR', value: '${stats.par}'),
         const SizedBox(height: 8),
         _StatBox(label: 'HCP', value: '${stats.handicap}'),
@@ -57,6 +81,14 @@ class HoleStatsPanel extends StatelessWidget {
             icon: Icons.info_outline_rounded,
             tooltip: 'Hole details',
             onTap: onOpenDetails!,
+          ),
+        ],
+        if (onOpenGpsToGreen != null) ...[
+          const SizedBox(height: 8),
+          _SidebarIconButton(
+            icon: Icons.flag_rounded,
+            tooltip: 'GPS to Green',
+            onTap: onOpenGpsToGreen!,
           ),
         ],
       ],

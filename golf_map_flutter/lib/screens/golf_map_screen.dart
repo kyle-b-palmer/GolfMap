@@ -16,10 +16,10 @@ import '../services/round_storage_service.dart';
 import '../utils/geo_utils.dart';
 import '../widgets/distance_details_sheet.dart';
 import '../widgets/golf_map_view.dart';
-import '../widgets/hole_selector.dart';
 import '../widgets/hole_stats_panel.dart';
 import '../widgets/score_panel.dart';
 import '../widgets/track_shot_button.dart';
+import 'gps_to_green_screen.dart';
 
 class GolfMapScreen extends StatefulWidget {
   const GolfMapScreen({
@@ -667,6 +667,19 @@ class _GolfMapScreenState extends State<GolfMapScreen> {
     });
   }
 
+  void _selectHole(String hole) {
+    setState(() => _selectedHole = hole);
+    _clearDistance();
+    _refreshHoleState();
+  }
+
+  void _goToNextHole() {
+    if (_holes.isEmpty) return;
+    final index = _holes.indexOf(_selectedHole);
+    final nextIndex = index < 0 ? 0 : (index + 1) % _holes.length;
+    _selectHole(_holes[nextIndex]);
+  }
+
   void _handleTrackShotAction(TrackShotAction action) {
     switch (action) {
       case TrackShotAction.gps:
@@ -678,6 +691,23 @@ class _GolfMapScreenState extends State<GolfMapScreen> {
           setState(() => _idealLineEnabled = !_idealLineEnabled);
         }
     }
+  }
+
+  void _openGpsToGreen() {
+    final course = _selectedCourse;
+    if (course == null) return;
+
+    Navigator.push(
+      context,
+      MaterialPageRoute<void>(
+        builder: (_) => GpsToGreenScreen(
+          features: _features,
+          course: course,
+          hole: _selectedHole,
+          initialUserCoord: _userCoord,
+        ),
+      ),
+    );
   }
 
   int get _currentHoleScore {
@@ -887,29 +917,23 @@ class _GolfMapScreenState extends State<GolfMapScreen> {
                     ),
                   ],
                 ),
-                const SizedBox(height: 10),
-                HoleSelector(
-                  holes: _holes,
-                  selectedHole: _selectedHole,
-                  onSelectHole: (hole) {
-                    setState(() => _selectedHole = hole);
-                    _clearDistance();
-                    _refreshHoleState();
-                  },
-                ),
               ],
             ),
           ),
         ),
         if (_currentHoleStats != null)
           Positioned(
-            top: kIsWeb ? 132 : 117,
+            top: kIsWeb ? 72 : 64,
             right: 15,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 HoleStatsPanel(
                   stats: _currentHoleStats!,
+                  holes: _holes,
+                  selectedHole: _selectedHole,
+                  onSelectHole: _selectHole,
+                  onNextHole: _goToNextHole,
                   yardage: _holeYardage,
                   greenYardages: _distanceInfo?.greenYardages,
                   showBunkerDistancesOnMap: _showBunkerDistancesOnMap,
@@ -919,6 +943,7 @@ class _GolfMapScreenState extends State<GolfMapScreen> {
                   onOpenDetails: _distanceInfo == null
                       ? null
                       : _openDistanceDetails,
+                  onOpenGpsToGreen: _openGpsToGreen,
                 ),
                 if (_selectedMeasurementPinIndex != null) ...[
                   const SizedBox(height: 8),
