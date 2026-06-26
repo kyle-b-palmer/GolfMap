@@ -17,6 +17,7 @@ class GolfMapView extends StatefulWidget {
   const GolfMapView({
     super.key,
     required this.mapController,
+    this.mapVisualEpoch = 0,
     required this.features,
     required this.selectedCourse,
     required this.selectedHole,
@@ -42,6 +43,7 @@ class GolfMapView extends StatefulWidget {
   });
 
   final MapController mapController;
+  final int mapVisualEpoch;
   final List<GolfFeature> features;
   final String? selectedCourse;
   final String selectedHole;
@@ -159,14 +161,16 @@ class _GolfMapViewState extends State<GolfMapView> {
     );
     return Marker(
       point: mid,
-      width: 72,
-      height: 22,
+      width: 88,
+      height: 28,
       alignment: Alignment.center,
-      child: _ShotDistanceLabel(
-        yards: yards,
-        shotNumber: shotNumber,
-        borderColor: AppTheme.measureBlue,
-        textColor: const Color(0xFF90CAF9),
+      child: Center(
+        child: _ShotDistanceLabel(
+          yards: yards,
+          shotNumber: shotNumber,
+          borderColor: AppTheme.measureBlue,
+          textColor: const Color(0xFF90CAF9),
+        ),
       ),
     );
   }
@@ -294,13 +298,19 @@ class _GolfMapViewState extends State<GolfMapView> {
   @override
   void didUpdateWidget(GolfMapView oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.features != widget.features ||
+    final layersChanged = oldWidget.features != widget.features ||
         oldWidget.selectedCourse != widget.selectedCourse ||
         oldWidget.selectedHole != widget.selectedHole ||
         oldWidget.selectedTeeFeatureId != widget.selectedTeeFeatureId ||
         oldWidget.usingGpsForShot != widget.usingGpsForShot ||
-        oldWidget.greenCenter != widget.greenCenter) {
+        oldWidget.greenCenter != widget.greenCenter ||
+        oldWidget.mapVisualEpoch != widget.mapVisualEpoch;
+    if (layersChanged) {
       _rebuildBaseLayers();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        setState(() {});
+      });
     }
     if (oldWidget.lockedMeasurementPoints != widget.lockedMeasurementPoints &&
         _draggingLockedIndex == null) {
@@ -520,10 +530,10 @@ class _GolfMapViewState extends State<GolfMapView> {
       markers.add(
         Marker(
           point: mid,
-          width: 72,
-          height: 22,
+          width: 88,
+          height: 28,
           alignment: Alignment.center,
-          child: _ShotDistanceLabel(yards: yards),
+          child: Center(child: _ShotDistanceLabel(yards: yards)),
         ),
       );
 
@@ -579,13 +589,15 @@ class _GolfMapViewState extends State<GolfMapView> {
       markers.add(
         Marker(
           point: bunker.point!,
-          width: 52,
-          height: 22,
+          width: 68,
+          height: 28,
           alignment: Alignment.center,
-          child: _ShotDistanceLabel(
+          child: Center(
+            child: _ShotDistanceLabel(
             yards: bunker.yards,
             borderColor: const Color(0xFFD4B86A),
             textColor: const Color(0xFFF5E6B8),
+            ),
           ),
         ),
       );
@@ -593,8 +605,8 @@ class _GolfMapViewState extends State<GolfMapView> {
     return markers;
   }
 
-  static const _calloutBaseWidth = 112.0;
-  static const _calloutBaseHeight = 54.0;
+  static const _calloutBaseWidth = 140.0;
+  static const _calloutBaseHeight = 72.0;
 
   double _greenCalloutScale() {
     final zoom = _calloutZoom;
@@ -645,7 +657,7 @@ class _GolfMapViewState extends State<GolfMapView> {
               children: [
                 _GreenYardageCallout(yardages: yardages),
                 CustomPaint(
-                  size: const Size(14, 9),
+                  size: const Size(16, 10),
                   painter: const _CalloutTailPainter(pointingUp: false),
                 ),
               ],
@@ -867,13 +879,15 @@ class _GolfMapViewState extends State<GolfMapView> {
         Marker(
           point: mid,
           width: 88,
-          height: 22,
+          height: 28,
           alignment: Alignment.center,
-          child: _ShotDistanceLabel(
+          child: Center(
+            child: _ShotDistanceLabel(
             yards: segment.yards,
             shotNumber: segment.shotNumber,
             borderColor: const Color(0xFFE53935),
             textColor: const Color(0xFFFF8A80),
+            ),
           ),
         ),
       );
@@ -1189,10 +1203,11 @@ class _ShotDistanceLabel extends StatelessWidget {
             : yardsText;
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+      alignment: Alignment.center,
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
         color: const Color(0xE0101018),
-        borderRadius: BorderRadius.circular(6),
+        borderRadius: BorderRadius.circular(7),
         border: Border.all(color: borderColor, width: 1),
         boxShadow: const [
           BoxShadow(
@@ -1206,9 +1221,10 @@ class _ShotDistanceLabel extends StatelessWidget {
         label,
         maxLines: 1,
         softWrap: false,
+        textAlign: TextAlign.center,
         style: TextStyle(
           color: textColor,
-          fontSize: 9,
+          fontSize: 12,
           fontWeight: FontWeight.w800,
           height: 1,
         ),
@@ -1225,10 +1241,11 @@ class _GreenYardageCallout extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      alignment: Alignment.center,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
       decoration: BoxDecoration(
         color: const Color(0xF0121810),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(9),
         border: Border.all(
           color: AppTheme.accentGreen.withValues(alpha: 0.85),
           width: 1,
@@ -1242,19 +1259,20 @@ class _GreenYardageCallout extends StatelessWidget {
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           _GreenYardageLine(
             yards: yardages.middle,
             label: 'Pin',
             icon: Icons.flag_rounded,
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 5),
           _GreenYardageLine(
             yards: yardages.front,
             label: 'Front',
             icon: Icons.arrow_upward_rounded,
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 5),
           _GreenYardageLine(
             yards: yardages.back,
             label: 'Back',
@@ -1320,14 +1338,15 @@ class _GreenYardageLine extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       mainAxisSize: MainAxisSize.min,
+      mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        Icon(icon, size: 11, color: AppTheme.accentGreen),
-        const SizedBox(width: 5),
+        Icon(icon, size: 14, color: AppTheme.accentGreen),
+        const SizedBox(width: 6),
         Text(
           '$yards yds',
           style: const TextStyle(
             color: Color(0xFFE8EAED),
-            fontSize: 9,
+            fontSize: 12,
             fontWeight: FontWeight.w800,
             height: 1,
           ),
@@ -1336,7 +1355,7 @@ class _GreenYardageLine extends StatelessWidget {
           ' | $label',
           style: TextStyle(
             color: AppTheme.textMuted.withValues(alpha: 0.95),
-            fontSize: 9,
+            fontSize: 12,
             fontWeight: FontWeight.w600,
             height: 1,
           ),

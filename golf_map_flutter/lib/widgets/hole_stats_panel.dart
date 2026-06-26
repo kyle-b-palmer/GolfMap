@@ -8,25 +8,19 @@ class HoleStatsPanel extends StatelessWidget {
   const HoleStatsPanel({
     super.key,
     required this.stats,
-    required this.holes,
-    required this.selectedHole,
-    required this.onSelectHole,
     this.onNextHole,
     this.yardage,
-    this.greenYardages,
-    this.showBunkerDistancesOnMap = true,
+    this.gpsGreenYardages,
+    this.showBunkerDistancesOnMap = false,
     this.onToggleBunkerDistancesOnMap,
     this.onOpenDetails,
     this.onOpenGpsToGreen,
   });
 
   final HoleStats stats;
-  final List<String> holes;
-  final String selectedHole;
-  final ValueChanged<String> onSelectHole;
   final VoidCallback? onNextHole;
   final int? yardage;
-  final GreenYardages? greenYardages;
+  final GreenYardages? gpsGreenYardages;
   final bool showBunkerDistancesOnMap;
   final ValueChanged<bool>? onToggleBunkerDistancesOnMap;
   final VoidCallback? onOpenDetails;
@@ -37,19 +31,6 @@ class HoleStatsPanel extends StatelessWidget {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        SidebarHolePicker(
-          holes: holes,
-          selectedHole: selectedHole,
-          onSelectHole: onSelectHole,
-        ),
-        if (onNextHole != null) ...[
-          const SizedBox(height: 8),
-          NextHoleButton(
-            onTap: onNextHole!,
-            enabled: holes.length > 1,
-          ),
-        ],
-        const SizedBox(height: 8),
         _StatBox(label: 'PAR', value: '${stats.par}'),
         const SizedBox(height: 8),
         _StatBox(label: 'HCP', value: '${stats.handicap}'),
@@ -57,9 +38,9 @@ class HoleStatsPanel extends StatelessWidget {
           const SizedBox(height: 8),
           _StatBox(label: 'YDS', value: '$yardage', compactValue: true),
         ],
-        if (greenYardages != null) ...[
+        if (gpsGreenYardages != null) ...[
           const SizedBox(height: 8),
-          _GreenYardageBox(yardages: greenYardages!),
+          _GpsGreenYardageBox(yardages: gpsGreenYardages!),
         ],
         if (onToggleBunkerDistancesOnMap != null) ...[
           const SizedBox(height: 8),
@@ -91,13 +72,20 @@ class HoleStatsPanel extends StatelessWidget {
             onTap: onOpenGpsToGreen!,
           ),
         ],
+        if (onNextHole != null) ...[
+          const SizedBox(height: 8),
+          NextHoleButton(
+            onTap: onNextHole!,
+            enabled: true,
+          ),
+        ],
       ],
     );
   }
 }
 
-class _GreenYardageBox extends StatelessWidget {
-  const _GreenYardageBox({required this.yardages});
+class _GpsGreenYardageBox extends StatelessWidget {
+  const _GpsGreenYardageBox({required this.yardages});
 
   final GreenYardages yardages;
 
@@ -119,15 +107,13 @@ class _GreenYardageBox extends StatelessWidget {
         ],
       ),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const Text(
-            'GRN',
-            style: TextStyle(
-              color: AppTheme.measureBlue,
-              fontSize: 8,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 0.6,
-            ),
+          Icon(
+            Icons.gps_fixed_rounded,
+            size: 14,
+            color: AppTheme.measureBlue.withValues(alpha: 0.95),
           ),
           const SizedBox(height: 4),
           _GreenYardRow(label: 'F', yards: yardages.front),

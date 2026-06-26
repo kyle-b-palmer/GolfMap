@@ -9,11 +9,13 @@ class SidebarHolePicker extends StatefulWidget {
     required this.holes,
     required this.selectedHole,
     required this.onSelectHole,
+    this.large = false,
   });
 
   final List<String> holes;
   final String selectedHole;
   final ValueChanged<String> onSelectHole;
+  final bool large;
 
   @override
   State<SidebarHolePicker> createState() => _SidebarHolePickerState();
@@ -81,9 +83,16 @@ class _SidebarHolePickerState extends State<SidebarHolePicker> {
       return const SizedBox.shrink();
     }
 
+    final width = widget.large ? 72.0 : 52.0;
+    final height = widget.large ? 108.0 : 72.0;
+    final labelSize = widget.large ? 9.0 : 8.0;
+    final itemExtent = widget.large ? 30.0 : 22.0;
+    final centeredFontSize = widget.large ? 26.0 : 18.0;
+    final sideFontSize = widget.large ? 15.0 : 13.0;
+
     return Container(
-      width: 52,
-      height: 72,
+      width: width,
+      height: height,
       decoration: BoxDecoration(
         color: AppTheme.panelBg,
         borderRadius: BorderRadius.circular(12),
@@ -98,13 +107,13 @@ class _SidebarHolePickerState extends State<SidebarHolePicker> {
       ),
       child: Column(
         children: [
-          const Padding(
-            padding: EdgeInsets.only(top: 6),
+          Padding(
+            padding: EdgeInsets.only(top: widget.large ? 8 : 6),
             child: Text(
               'HOLE',
               style: TextStyle(
                 color: AppTheme.accentGreen,
-                fontSize: 8,
+                fontSize: labelSize,
                 fontWeight: FontWeight.w800,
                 letterSpacing: 0.6,
               ),
@@ -115,7 +124,7 @@ class _SidebarHolePickerState extends State<SidebarHolePicker> {
               onPointerDown: (_) => HapticFeedback.lightImpact(),
               child: ListWheelScrollView.useDelegate(
                 controller: _controller,
-                itemExtent: 22,
+                itemExtent: itemExtent,
                 diameterRatio: 1.35,
                 perspective: 0.004,
                 physics: const FixedExtentScrollPhysics(),
@@ -132,7 +141,7 @@ class _SidebarHolePickerState extends State<SidebarHolePicker> {
                           color: isCentered
                               ? Colors.white
                               : AppTheme.textMuted.withValues(alpha: 0.55),
-                          fontSize: isCentered ? 18 : 13,
+                          fontSize: isCentered ? centeredFontSize : sideFontSize,
                           fontWeight: FontWeight.w800,
                           height: 1,
                         ),

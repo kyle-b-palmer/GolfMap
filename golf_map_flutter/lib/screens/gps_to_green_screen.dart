@@ -11,6 +11,7 @@ import '../config/app_config.dart';
 import '../config/app_theme.dart';
 import '../models/golf_feature.dart';
 import '../utils/geo_utils.dart';
+import '../widgets/hole_selector.dart';
 import '../widgets/map_marker_graphics.dart';
 
 class GpsToGreenScreen extends StatefulWidget {
@@ -19,12 +20,14 @@ class GpsToGreenScreen extends StatefulWidget {
     required this.features,
     required this.course,
     required this.hole,
+    required this.holes,
     this.initialUserCoord,
   });
 
   final List<GolfFeature> features;
   final String course;
   final String hole;
+  final List<String> holes;
   final LatLng? initialUserCoord;
 
   @override
@@ -39,6 +42,7 @@ class _GpsToGreenScreenState extends State<GpsToGreenScreen> {
 
   LatLng? _userCoord;
   late LatLng _pinPosition;
+  late String _hole;
   bool _mapReady = false;
   bool _draggingPin = false;
   LatLng? _dragPinCoord;
@@ -47,7 +51,7 @@ class _GpsToGreenScreenState extends State<GpsToGreenScreen> {
 
   List<GolfFeature> get _holeFeatures => widget.features
       .where(
-        (f) => f.matchesCourse(widget.course) && f.matchesHole(widget.hole),
+        (f) => f.matchesCourse(widget.course) && f.matchesHole(_hole),
       )
       .toList();
 
@@ -67,12 +71,29 @@ class _GpsToGreenScreenState extends State<GpsToGreenScreen> {
   @override
   void initState() {
     super.initState();
+    _hole = widget.hole;
     _userCoord = widget.initialUserCoord;
+    _resetPinForHole();
+    _initLocation();
+  }
+
+  void _resetPinForHole() {
     _pinPosition =
         greenCenterForHole(_holeFeatures) ??
         centerForFeatures(_greenFeatures) ??
         LatLng(AppConfig.defaultCenter[0], AppConfig.defaultCenter[1]);
-    _initLocation();
+  }
+
+  void _selectHole(String hole) {
+    if (hole == _hole) return;
+    setState(() {
+      _hole = hole;
+      _draggingPin = false;
+      _dragPinCoord = null;
+      _dragAnchorScreen = null;
+      _resetPinForHole();
+    });
+    _focusOnGreen();
   }
 
   @override
@@ -358,7 +379,7 @@ class _GpsToGreenScreenState extends State<GpsToGreenScreen> {
               ),
               Expanded(
                 child: Text(
-                  'HOLE ${widget.hole} · GPS TO GREEN',
+                  'HOLE $_hole · GPS TO GREEN',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     color: AppTheme.accentGreen,
@@ -372,6 +393,16 @@ class _GpsToGreenScreenState extends State<GpsToGreenScreen> {
             ],
           ),
         ),
+        if (widget.holes.isNotEmpty)
+          Positioned(
+            top: 64,
+            right: 15,
+            child: SidebarHolePicker(
+              holes: widget.holes,
+              selectedHole: _hole,
+              onSelectHole: _selectHole,
+            ),
+          ),
         Positioned(
           left: 16,
           right: 16,

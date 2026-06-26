@@ -13,7 +13,7 @@ class DistanceDetailsSheet extends StatefulWidget {
     required this.courseName,
     required this.selectedHole,
     required this.par,
-    required this.distanceInfo,
+    this.distanceInfo,
     required this.teeOptions,
     required this.selectedTeeFeatureId,
     required this.onSelectTee,
@@ -22,12 +22,14 @@ class DistanceDetailsSheet extends StatefulWidget {
     this.selectedMeasurementPinIndex,
     this.onSelectMeasurementPin,
     this.onDeleteSelectedPin,
+    this.showScoreTarget = true,
+    this.onShowScoreTargetChanged,
   });
 
   final String courseName;
   final String selectedHole;
   final int par;
-  final DistanceInfo distanceInfo;
+  final DistanceInfo? distanceInfo;
   final List<TeeOption> teeOptions;
   final dynamic selectedTeeFeatureId;
   final ValueChanged<dynamic> onSelectTee;
@@ -36,13 +38,15 @@ class DistanceDetailsSheet extends StatefulWidget {
   final int? selectedMeasurementPinIndex;
   final ValueChanged<int>? onSelectMeasurementPin;
   final VoidCallback? onDeleteSelectedPin;
+  final bool showScoreTarget;
+  final ValueChanged<bool>? onShowScoreTargetChanged;
 
   static Future<void> show(
     BuildContext context, {
     required String courseName,
     required String selectedHole,
     required int par,
-    required DistanceInfo distanceInfo,
+    DistanceInfo? distanceInfo,
     required List<TeeOption> teeOptions,
     required dynamic selectedTeeFeatureId,
     required ValueChanged<dynamic> onSelectTee,
@@ -51,9 +55,12 @@ class DistanceDetailsSheet extends StatefulWidget {
     int? selectedMeasurementPinIndex,
     ValueChanged<int>? onSelectMeasurementPin,
     VoidCallback? onDeleteSelectedPin,
+    bool showScoreTarget = true,
+    ValueChanged<bool>? onShowScoreTargetChanged,
   }) {
     return showModalBottomSheet<void>(
       context: context,
+      useRootNavigator: true,
       isScrollControlled: true,
       backgroundColor: AppTheme.panelBg,
       shape: const RoundedRectangleBorder(
@@ -76,6 +83,8 @@ class DistanceDetailsSheet extends StatefulWidget {
           selectedMeasurementPinIndex: selectedMeasurementPinIndex,
           onSelectMeasurementPin: onSelectMeasurementPin,
           onDeleteSelectedPin: onDeleteSelectedPin,
+          showScoreTarget: showScoreTarget,
+          onShowScoreTargetChanged: onShowScoreTargetChanged,
         ),
       ),
     );
@@ -87,6 +96,26 @@ class DistanceDetailsSheet extends StatefulWidget {
 
 class _DistanceDetailsSheetState extends State<DistanceDetailsSheet> {
   _DistanceTab _tab = _DistanceTab.yardage;
+  late bool _showScoreTarget;
+
+  @override
+  void initState() {
+    super.initState();
+    _showScoreTarget = widget.showScoreTarget;
+  }
+
+  @override
+  void didUpdateWidget(covariant DistanceDetailsSheet oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.showScoreTarget != widget.showScoreTarget) {
+      _showScoreTarget = widget.showScoreTarget;
+    }
+  }
+
+  void _onScoreTargetToggled(bool value) {
+    setState(() => _showScoreTarget = value);
+    widget.onShowScoreTargetChanged?.call(value);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -151,27 +180,77 @@ class _DistanceDetailsSheetState extends State<DistanceDetailsSheet> {
               ],
             ),
             const SizedBox(height: 12),
+            if (widget.onShowScoreTargetChanged != null) ...[
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1A1A22),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppTheme.panelBorder),
+                ),
+                child: SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text(
+                    'Score target',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  subtitle: Text(
+                    _showScoreTarget
+                        ? 'Show LEFT / FOR X TO PLAY in score box'
+                        : 'Show score total only',
+                    style: TextStyle(
+                      color: AppTheme.textMuted.withValues(alpha: 0.95),
+                      fontSize: 11,
+                    ),
+                  ),
+                  value: _showScoreTarget,
+                  activeTrackColor: AppTheme.accentGreen.withValues(alpha: 0.35),
+                  activeThumbColor: AppTheme.accentGreen,
+                  onChanged: _onScoreTargetToggled,
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
             Flexible(
               child: SingleChildScrollView(
-                child: _tab == _DistanceTab.yardage
-                    ? DistanceCardDetailsBody(
-                        distanceInfo: info,
-                        teeOptions: widget.teeOptions,
-                        selectedTeeFeatureId: widget.selectedTeeFeatureId,
-                        onSelectTee: widget.onSelectTee,
-                        onPinShot: widget.onPinShot,
-                        pinnedShotCount: widget.pinnedShotCount,
-                        selectedMeasurementPinIndex:
-                            widget.selectedMeasurementPinIndex,
-                        onSelectMeasurementPin: widget.onSelectMeasurementPin,
-                        onDeleteSelectedPin: widget.onDeleteSelectedPin,
-                        showGreenYardages: false,
+                child: info == null
+                    ? const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 24),
+                        child: Text(
+                          'Select a tee to view yardage and bunker details.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: AppTheme.textMuted,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                       )
-                    : DistanceCardBunkersBody(
-                        distanceInfo: info,
-                        teeOptions: widget.teeOptions,
-                        selectedTeeFeatureId: widget.selectedTeeFeatureId,
-                      ),
+                    : _tab == _DistanceTab.yardage
+                        ? DistanceCardDetailsBody(
+                            distanceInfo: info,
+                            teeOptions: widget.teeOptions,
+                            selectedTeeFeatureId: widget.selectedTeeFeatureId,
+                            onSelectTee: widget.onSelectTee,
+                            onPinShot: widget.onPinShot,
+                            pinnedShotCount: widget.pinnedShotCount,
+                            selectedMeasurementPinIndex:
+                                widget.selectedMeasurementPinIndex,
+                            onSelectMeasurementPin:
+                                widget.onSelectMeasurementPin,
+                            onDeleteSelectedPin: widget.onDeleteSelectedPin,
+                            showGreenYardages: false,
+                          )
+                        : DistanceCardBunkersBody(
+                            distanceInfo: info,
+                            teeOptions: widget.teeOptions,
+                            selectedTeeFeatureId: widget.selectedTeeFeatureId,
+                          ),
               ),
             ),
           ],

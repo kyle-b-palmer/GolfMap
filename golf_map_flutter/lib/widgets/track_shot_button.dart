@@ -54,7 +54,7 @@ class _TrackShotButtonState extends State<TrackShotButton> {
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: AppTheme.measureBlue, width: 1.5),
+                border: Border.all(color: AppTheme.panelBorder),
                 boxShadow: const [
                   BoxShadow(
                     color: Color(0x33000000),
@@ -68,7 +68,7 @@ class _TrackShotButtonState extends State<TrackShotButton> {
                 children: [
                   const Icon(
                     Icons.my_location_rounded,
-                    color: AppTheme.measureBlue,
+                    color: AppTheme.accentGreen,
                     size: 18,
                   ),
                   const SizedBox(width: 8),
@@ -85,7 +85,7 @@ class _TrackShotButtonState extends State<TrackShotButton> {
                     _menuOpen
                         ? Icons.keyboard_arrow_up_rounded
                         : Icons.keyboard_arrow_down_rounded,
-                    color: AppTheme.textMuted,
+                    color: AppTheme.accentGreen,
                     size: 18,
                   ),
                 ],
@@ -172,8 +172,7 @@ class _TrackShotMenuItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = accentColor ??
-        (active ? AppTheme.accentGreen : AppTheme.measureBlue);
+    final color = accentColor ?? AppTheme.accentGreen;
     return Material(
       color: active ? color.withValues(alpha: 0.1) : Colors.transparent,
       child: InkWell(

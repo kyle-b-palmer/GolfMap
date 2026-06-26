@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../config/app_theme.dart';
 import '../models/saved_round.dart';
 import '../services/golf_data_service.dart';
+import '../services/round_live_activity_service.dart';
 import '../services/round_storage_service.dart';
 import 'golf_map_screen.dart';
 
@@ -26,7 +27,13 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    _clearStaleLiveActivity();
     _load();
+  }
+
+  Future<void> _clearStaleLiveActivity() async {
+    await RoundLiveActivityService.instance.init();
+    await RoundLiveActivityService.instance.end();
   }
 
   Future<void> _load() async {
@@ -56,15 +63,18 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _startRound(String course) async {
+    if (!mounted) return;
     final saved = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
         builder: (_) => GolfMapScreen(initialCourse: course),
       ),
     );
-    if (saved == true) _load();
+    await RoundLiveActivityService.instance.end();
+    if (saved == true && mounted) _load();
   }
 
   Future<void> _openRound(SavedRound round) async {
+    if (!mounted) return;
     final saved = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
         builder: (_) => GolfMapScreen(
@@ -76,7 +86,8 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ),
     );
-    if (saved == true) _load();
+    await RoundLiveActivityService.instance.end();
+    if (saved == true && mounted) _load();
   }
 
   Future<void> _deleteRound(SavedRound round) async {

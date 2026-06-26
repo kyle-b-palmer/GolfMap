@@ -217,6 +217,16 @@ LatLngBounds? boundsForFeatures(List<GolfFeature> features) {
   return LatLngBounds.fromPoints(points);
 }
 
+LatLngBounds? boundsForEncirclementRing(
+  List<GolfFeature> features,
+  String? course,
+  String hole,
+) {
+  final ring = holeEncirclementRing(features, course, hole);
+  if (ring.length < 3) return null;
+  return LatLngBounds.fromPoints(ring);
+}
+
 LatLng? centerForFeatures(List<GolfFeature> features) {
   final points = <LatLng>[];
   for (final feature in features) {
@@ -407,6 +417,38 @@ List<LatLng> holeEncirclementRing(
   String? course,
   String hole,
 ) {
+  return _holeEncirclementRing(
+    features,
+    course,
+    hole,
+    alongPadMeters: 10,
+    lateralPadMeters: 8,
+  );
+}
+
+/// Tighter ellipse for camera framing so short holes zoom in further.
+List<LatLng> holeCameraFocusRing(
+  List<GolfFeature> features,
+  String? course,
+  String hole, {
+  bool tightZoom = false,
+}) {
+  return _holeEncirclementRing(
+    features,
+    course,
+    hole,
+    alongPadMeters: tightZoom ? 2 : 4,
+    lateralPadMeters: tightZoom ? 1 : 2,
+  );
+}
+
+List<LatLng> _holeEncirclementRing(
+  List<GolfFeature> features,
+  String? course,
+  String hole, {
+  required double alongPadMeters,
+  required double lateralPadMeters,
+}) {
   final holeFeatures =
       features.where((f) => f.isActive(course, hole)).toList();
 
@@ -448,8 +490,6 @@ List<LatLng> holeEncirclementRing(
     if (lateral > maxLateral) maxLateral = lateral;
   }
 
-  const alongPadMeters = 10.0;
-  const lateralPadMeters = 8.0;
   final semiMajor = (maxAlong - minAlong) / 2 + alongPadMeters;
   final semiMinor = maxLateral + lateralPadMeters;
   final center = destinationFromBearing(
