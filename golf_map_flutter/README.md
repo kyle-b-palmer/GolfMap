@@ -1,6 +1,10 @@
 # golf_map_flutter
 
-A new Flutter project.
+Golf course map and scoring app with iOS Live Activity and Apple Watch companion support.
+
+## Apple Watch
+
+See [ios/WATCH_README.md](ios/WATCH_README.md) for building and using the watch app (scoring sync + GPS yardage to green).
 
 ## Getting Started
 

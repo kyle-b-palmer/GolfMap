@@ -61,6 +61,7 @@ final class LiveActivityBridge: NSObject, FlutterPlugin, FlutterStreamHandler {
                 greenLatitude: greenLatitude,
                 greenLongitude: greenLongitude
             )
+            WatchConnectivityBridge.shared.pushRoundStateIfNeeded()
             result(nil)
         case "updateGreenTarget":
             guard let args = call.arguments as? [String: Any] else {
@@ -109,6 +110,7 @@ final class LiveActivityBridge: NSObject, FlutterPlugin, FlutterStreamHandler {
             result(GolfRoundLiveActivityController.shared.loadState()?.revision ?? 0)
         case "clearSharedState":
             GolfRoundLiveActivityController.shared.clearSharedState()
+            WatchConnectivityBridge.shared.pushRoundStateIfNeeded()
             result(nil)
         default:
             result(FlutterMethodNotImplemented)

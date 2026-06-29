@@ -23,6 +23,8 @@
 		AA11BB01CC01000100000005 /* LiveActivityIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB01CC01000100000006 /* LiveActivityIntents.swift */; };
 		AA11BB01CC01000100000007 /* LiveActivityBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB01CC01000100000008 /* LiveActivityBridge.swift */; };
 		AA11BB01CC0100010000000A /* GolfRoundLiveActivityIntentsRegistration.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB01CC0100010000000B /* GolfRoundLiveActivityIntentsRegistration.swift */; };
+		WWATCH050000000000000001 /* GolfMapWatch.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = WWATCH010000000000000001 /* GolfMapWatch.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		WWATCH110000000000000001 /* WatchConnectivityBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = WWATCH100000000000000001 /* WatchConnectivityBridge.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -39,6 +41,13 @@
 			proxyType = 1;
 			remoteGlobalIDString = 532D4C992FEDB0AA0060C2F9;
 			remoteInfo = GolfRoundWidgetExtension;
+		};
+		WWATCH070000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 97C146E61CF9000F007C117D /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = WWATCH040000000000000001;
+			remoteInfo = GolfMapWatch;
 		};
 /* End PBXContainerItemProxy section */
 
@@ -62,6 +71,17 @@
 			files = (
 			);
 			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		WWATCH060000000000000001 /* Embed Watch Content */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(CONTENTS_FOLDER_PATH)/Watch";
+			dstSubfolderSpec = 16;
+			files = (
+				WWATCH050000000000000001 /* GolfMapWatch.app in Embed Watch Content */,
+			);
+			name = "Embed Watch Content";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXCopyFilesBuildPhase section */
@@ -91,6 +111,8 @@
 		AA11BB01CC01000100000006 /* LiveActivityIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveActivityIntents.swift; sourceTree = "<group>"; };
 		AA11BB01CC01000100000008 /* LiveActivityBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveActivityBridge.swift; sourceTree = "<group>"; };
 		AA11BB01CC0100010000000B /* GolfRoundLiveActivityIntentsRegistration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GolfRoundLiveActivityIntentsRegistration.swift; sourceTree = "<group>"; };
+		WWATCH010000000000000001 /* GolfMapWatch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = GolfMapWatch.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		WWATCH100000000000000001 /* WatchConnectivityBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchConnectivityBridge.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -101,10 +123,18 @@
 			);
 			target = 532D4C992FEDB0AA0060C2F9 /* GolfRoundWidgetExtension */;
 		};
+		WWATCH030000000000000001 /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = WWATCH040000000000000001 /* GolfMapWatch */;
+		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		532D4CA02FEDB0AA0060C2F9 /* GolfRoundWidget */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (532D4CB32FEDB0AB0060C2F9 /* PBXFileSystemSynchronizedBuildFileExceptionSet */, ); explicitFileTypes = {}; explicitFolders = (); path = GolfRoundWidget; sourceTree = "<group>"; };
+		WWATCH020000000000000001 /* GolfMapWatch */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (WWATCH030000000000000001 /* PBXFileSystemSynchronizedBuildFileExceptionSet */, ); explicitFileTypes = {}; explicitFolders = (); path = GolfMapWatch; sourceTree = "<group>"; };
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -122,6 +152,13 @@
 			buildActionMask = 2147483647;
 			files = (
 				78A318202AECB46A00862997 /* FlutterGeneratedPluginSwiftPackage in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		WWATCH0E0000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -163,6 +200,7 @@
 				9740EEB11CF90186004384FC /* Flutter */,
 				97C146F01CF9000F007C117D /* Runner */,
 				532D4CA02FEDB0AA0060C2F9 /* GolfRoundWidget */,
+				WWATCH020000000000000001 /* GolfMapWatch */,
 				AA11BB01CC01000100000009 /* LiveActivitySharedSources */,
 				532D4C9B2FEDB0AA0060C2F9 /* Frameworks */,
 				97C146EF1CF9000F007C117D /* Products */,
@@ -176,6 +214,7 @@
 				97C146EE1CF9000F007C117D /* Runner.app */,
 				331C8081294A63A400263BE5 /* RunnerTests.xctest */,
 				532D4C9A2FEDB0AA0060C2F9 /* GolfRoundWidgetExtension.appex */,
+				WWATCH010000000000000001 /* GolfMapWatch.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -192,6 +231,7 @@
 				74858FAE1ED2DC5600515810 /* AppDelegate.swift */,
 				AA11BB01CC01000100000008 /* LiveActivityBridge.swift */,
 				AA11BB01CC0100010000000B /* GolfRoundLiveActivityIntentsRegistration.swift */,
+				WWATCH100000000000000001 /* WatchConnectivityBridge.swift */,
 				74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */,
 			);
 			path = Runner;
@@ -250,6 +290,26 @@
 			productReference = 532D4C9A2FEDB0AA0060C2F9 /* GolfRoundWidgetExtension.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
+		WWATCH040000000000000001 /* GolfMapWatch */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = WWATCH090000000000000001 /* Build configuration list for PBXNativeTarget "GolfMapWatch" */;
+			buildPhases = (
+				WWATCH0D0000000000000001 /* Sources */,
+				WWATCH0E0000000000000001 /* Frameworks */,
+				WWATCH0F0000000000000001 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				WWATCH020000000000000001 /* GolfMapWatch */,
+			);
+			name = GolfMapWatch;
+			productName = GolfMapWatch;
+			productReference = WWATCH010000000000000001 /* GolfMapWatch.app */;
+			productType = "com.apple.product-type.application";
+		};
 		97C146ED1CF9000F007C117D /* Runner */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 97C147051CF9000F007C117D /* Build configuration list for PBXNativeTarget "Runner" */;
@@ -293,6 +353,9 @@
 					532D4C992FEDB0AA0060C2F9 = {
 						CreatedOnToolsVersion = 16.2;
 					};
+					WWATCH040000000000000001 = {
+						CreatedOnToolsVersion = 16.2;
+					};
 					97C146ED1CF9000F007C117D = {
 						CreatedOnToolsVersion = 7.3.1;
 						LastSwiftMigration = 1100;
@@ -318,6 +381,7 @@
 				97C146ED1CF9000F007C117D /* Runner */,
 				331C8080294A63A400263BE5 /* RunnerTests */,
 				532D4C992FEDB0AA0060C2F9 /* GolfRoundWidgetExtension */,
+				WWATCH040000000000000001 /* GolfMapWatch */,
 			);
 		};
 /* End PBXProject section */
@@ -331,6 +395,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		532D4C982FEDB0AA0060C2F9 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		WWATCH0F0000000000000001 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -400,6 +471,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		WWATCH0D0000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		97C146EA1CF9000F007C117D /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -410,6 +488,7 @@
 				AA11BB01CC01000100000001 /* LiveActivityAttributes.swift in Sources */,
 				AA11BB01CC01000100000003 /* LiveActivityShared.swift in Sources */,
 				AA11BB01CC01000100000005 /* LiveActivityIntents.swift in Sources */,
+				WWATCH110000000000000001 /* WatchConnectivityBridge.swift in Sources */,
 				1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -426,6 +505,11 @@
 			isa = PBXTargetDependency;
 			target = 532D4C992FEDB0AA0060C2F9 /* GolfRoundWidgetExtension */;
 			targetProxy = 532D4CAC2FEDB0AB0060C2F9 /* PBXContainerItemProxy */;
+		};
+		WWATCH080000000000000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = WWATCH040000000000000001 /* GolfMapWatch */;
+			targetProxy = WWATCH070000000000000001 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -691,6 +775,118 @@
 			};
 			name = Profile;
 		};
+		WWATCH0A0000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CODE_SIGN_ENTITLEMENTS = GolfMapWatch/GolfMapWatch.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = "$(FLUTTER_BUILD_NUMBER)";
+				DEVELOPMENT_TEAM = YTNK6X9E6B;
+				ENABLE_PREVIEWS = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = GolfMapWatch/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Golf Map";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = "$(FLUTTER_BUILD_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = com.golfmapapp.golfMapFlutter.watchkitapp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
+			};
+			name = Debug;
+		};
+		WWATCH0B0000000000000001 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CODE_SIGN_ENTITLEMENTS = GolfMapWatch/GolfMapWatch.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = "$(FLUTTER_BUILD_NUMBER)";
+				DEVELOPMENT_TEAM = YTNK6X9E6B;
+				ENABLE_PREVIEWS = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = GolfMapWatch/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Golf Map";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = "$(FLUTTER_BUILD_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = com.golfmapapp.golfMapFlutter.watchkitapp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				VALIDATE_PRODUCT = YES;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
+			};
+			name = Release;
+		};
+		WWATCH0C0000000000000001 /* Profile */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CODE_SIGN_ENTITLEMENTS = GolfMapWatch/GolfMapWatch.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = "$(FLUTTER_BUILD_NUMBER)";
+				DEVELOPMENT_TEAM = YTNK6X9E6B;
+				ENABLE_PREVIEWS = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = GolfMapWatch/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Golf Map";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = "$(FLUTTER_BUILD_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = com.golfmapapp.golfMapFlutter.watchkitapp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				VALIDATE_PRODUCT = YES;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
+			};
+			name = Profile;
+		};
 		97C147031CF9000F007C117D /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -868,6 +1064,16 @@
 				532D4CB02FEDB0AB0060C2F9 /* Debug */,
 				532D4CB12FEDB0AB0060C2F9 /* Release */,
 				532D4CB22FEDB0AB0060C2F9 /* Profile */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		WWATCH090000000000000001 /* Build configuration list for PBXNativeTarget "GolfMapWatch" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				WWATCH0A0000000000000001 /* Debug */,
+				WWATCH0B0000000000000001 /* Release */,
+				WWATCH0C0000000000000001 /* Profile */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
