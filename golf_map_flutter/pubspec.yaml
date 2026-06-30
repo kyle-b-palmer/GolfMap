@@ -1,5 +1,5 @@
 name: golf_map_flutter
-description: "Cross-platform golf course map with scoring and distance measurement."
+description: "South Texas golf course map with scoring and distance measurement."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -44,6 +44,7 @@ dependencies:
   shared_preferences: ^2.5.3
   share_plus: ^13.1.0
   live_activities: ^2.4.9
+  apple_maps_flutter: ^1.4.0
 
 dev_dependencies:
   flutter_test:

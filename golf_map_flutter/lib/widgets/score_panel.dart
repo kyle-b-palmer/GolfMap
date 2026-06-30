@@ -10,11 +10,13 @@ class HoleScoreLine {
     required this.hole,
     required this.par,
     required this.score,
+    this.putts = 0,
   });
 
   final String hole;
   final int par;
   final int score;
+  final int putts;
 }
 
 class ScorePanel extends StatelessWidget {
@@ -22,9 +24,11 @@ class ScorePanel extends StatelessWidget {
     super.key,
     required this.par,
     required this.currentHoleScore,
+    required this.currentHolePutts,
     required this.totalScore,
     required this.scorecardLines,
     required this.onScoreChanged,
+    required this.onPuttsChanged,
     required this.courseName,
     required this.playedAt,
     this.holeRelativeToPar = 0,
@@ -39,9 +43,11 @@ class ScorePanel extends StatelessWidget {
 
   final int par;
   final int currentHoleScore;
+  final int currentHolePutts;
   final int totalScore;
   final List<HoleScoreLine> scorecardLines;
   final ValueChanged<int> onScoreChanged;
+  final ValueChanged<int> onPuttsChanged;
   final String courseName;
   final DateTime playedAt;
   final int holeRelativeToPar;
@@ -112,18 +118,35 @@ class ScorePanel extends StatelessWidget {
         Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            SidebarScorePicker(
-              score: currentHoleScore,
-              par: par,
-              onScoreChanged: onScoreChanged,
-              scoreColor: _scoreColor(currentHoleScore),
-              strokesRemaining: showScoreTarget ? strokesRemainingForEvenPar : null,
-              holesToPlay: showScoreTarget ? holesToPlay : null,
-              targetScore: scoreTargetTotal,
-              onTargetTap: showScoreTarget && onScoreTargetChanged != null
-                  ? () => _showTargetPicker(context)
-                  : null,
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                SidebarScorePicker(
+                  score: currentHoleScore,
+                  par: par,
+                  onScoreChanged: onScoreChanged,
+                  scoreColor: _scoreColor(currentHoleScore),
+                ),
+                const SizedBox(width: 6),
+                SidebarPuttsPicker(
+                  putts: currentHolePutts,
+                  onPuttsChanged: onPuttsChanged,
+                ),
+              ],
             ),
+            if (showScoreTarget &&
+                strokesRemainingForEvenPar != null &&
+                holesToPlay != null) ...[
+              const SizedBox(height: 4),
+              _TargetSummary(
+                strokesRemaining: strokesRemainingForEvenPar!,
+                holesToPlay: holesToPlay!,
+                onTargetTap: onScoreTargetChanged != null
+                    ? () => _showTargetPicker(context)
+                    : null,
+              ),
+            ],
             if (holeRelativeToPar != 0) ...[
               const SizedBox(height: 4),
               Text(
@@ -376,6 +399,189 @@ class _SidebarScorePickerState extends State<SidebarScorePicker> {
   }
 }
 
+class SidebarPuttsPicker extends StatefulWidget {
+  const SidebarPuttsPicker({
+    super.key,
+    required this.putts,
+    required this.onPuttsChanged,
+    this.maxPutts = 9,
+  });
+
+  final int putts;
+  final int maxPutts;
+  final ValueChanged<int> onPuttsChanged;
+
+  @override
+  State<SidebarPuttsPicker> createState() => _SidebarPuttsPickerState();
+}
+
+class _SidebarPuttsPickerState extends State<SidebarPuttsPicker> {
+  static const _boxWidth = 52.0;
+  static const _boxHeight = 72.0;
+
+  late FixedExtentScrollController _controller;
+  bool _syncing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = FixedExtentScrollController(
+      initialItem: widget.putts.clamp(0, widget.maxPutts),
+    );
+    _controller.addListener(() {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void didUpdateWidget(SidebarPuttsPicker oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.putts != widget.putts ||
+        oldWidget.maxPutts != widget.maxPutts) {
+      final index = widget.putts.clamp(0, widget.maxPutts);
+      if (_controller.selectedItem != index) {
+        _syncing = true;
+        _controller.jumpToItem(index);
+        _syncing = false;
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _onWheelChanged(int index) {
+    if (_syncing) return;
+    final putts = index.clamp(0, widget.maxPutts);
+    if (putts == widget.putts) return;
+    HapticFeedback.selectionClick();
+    widget.onPuttsChanged(putts);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: _boxWidth,
+      height: _boxHeight,
+      decoration: BoxDecoration(
+        color: AppTheme.accentGreen,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppTheme.accentGreenDim),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x33000000),
+            blurRadius: 8,
+            offset: Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          const Padding(
+            padding: EdgeInsets.only(top: 6, left: 2, right: 2),
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                'PUTTS',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 8,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.4,
+                ),
+              ),
+            ),
+          ),
+          Expanded(
+            child: Listener(
+              onPointerDown: (_) => HapticFeedback.lightImpact(),
+              child: ListWheelScrollView.useDelegate(
+                controller: _controller,
+                itemExtent: 22,
+                diameterRatio: 1.35,
+                perspective: 0.004,
+                physics: const FixedExtentScrollPhysics(),
+                onSelectedItemChanged: _onWheelChanged,
+                childDelegate: ListWheelChildBuilderDelegate(
+                  childCount: widget.maxPutts + 1,
+                  builder: (context, index) {
+                    final isCentered = index == _controller.selectedItem;
+                    return Center(
+                      child: Text(
+                        index == 0 ? '—' : '$index',
+                        style: TextStyle(
+                          color: isCentered
+                              ? Colors.white
+                              : AppTheme.textMuted.withValues(alpha: 0.5),
+                          fontSize: isCentered ? 20 : 13,
+                          fontWeight: FontWeight.w900,
+                          height: 1,
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TargetSummary extends StatelessWidget {
+  const _TargetSummary({
+    required this.strokesRemaining,
+    required this.holesToPlay,
+    this.onTargetTap,
+  });
+
+  final int strokesRemaining;
+  final int holesToPlay;
+  final VoidCallback? onTargetTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final content = Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          'LEFT $strokesRemaining',
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 8,
+            fontWeight: FontWeight.w800,
+            height: 1.1,
+          ),
+        ),
+        Text(
+          'FOR $holesToPlay TO PLAY',
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 8,
+            fontWeight: FontWeight.w800,
+            height: 1.1,
+          ),
+        ),
+      ],
+    );
+
+    if (onTargetTap == null) return content;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTargetTap,
+        child: content,
+      ),
+    );
+  }
+}
+
 class _CompactTotalBox extends StatelessWidget {
   const _CompactTotalBox({
     required this.totalScore,
@@ -592,6 +798,7 @@ class _ScorecardSheetState extends State<_ScorecardSheet> {
                       hole: line.hole,
                       par: line.par,
                       score: line.score,
+                      putts: line.putts,
                     );
                   },
                 ),
@@ -647,6 +854,18 @@ class _ScorecardHeaderRow extends StatelessWidget {
         ),
         Expanded(
           child: Text(
+            'Putts',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: AppTheme.accentGreen,
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.8,
+            ),
+          ),
+        ),
+        Expanded(
+          child: Text(
             'Score',
             textAlign: TextAlign.center,
             style: TextStyle(
@@ -667,12 +886,14 @@ class _ScorecardDataRow extends StatelessWidget {
     required this.hole,
     required this.par,
     required this.score,
+    this.putts = 0,
     this.emphasized = false,
   });
 
   final String hole;
   final int par;
   final int score;
+  final int putts;
   final bool emphasized;
 
   @override
@@ -704,6 +925,17 @@ class _ScorecardDataRow extends StatelessWidget {
           Expanded(
             child: Text(
               par > 0 ? '$par' : '—',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: emphasized ? Colors.white : AppTheme.textMuted,
+                fontSize: emphasized ? 14 : 13,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              putts > 0 ? '$putts' : '—',
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: emphasized ? Colors.white : AppTheme.textMuted,

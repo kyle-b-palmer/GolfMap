@@ -1,6 +1,6 @@
 {
-    "name": "Golf Map",
-    "short_name": "Golf Map",
+    "name": "South Texas Golf Tracker",
+    "short_name": "ST Golf Tracker",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#000000",

@@ -32,6 +32,7 @@ class LiveActivityWidgetChanges {
     required this.courseName,
     required this.selectedHole,
     required this.scores,
+    required this.putts,
     required this.revision,
     this.pendingGpsPins = const [],
   });
@@ -39,6 +40,7 @@ class LiveActivityWidgetChanges {
   final String courseName;
   final String selectedHole;
   final Map<String, int> scores;
+  final Map<String, int> putts;
   final int revision;
   final List<LiveActivityGpsPin> pendingGpsPins;
 }
@@ -77,8 +79,12 @@ class RoundLiveActivityService {
 
   Future<void> init() async {
     if (!isSupported || _initialized) return;
-    await _plugin.init(appGroupId: appGroupId);
-    _initialized = true;
+    try {
+      await _plugin.init(appGroupId: appGroupId);
+      _initialized = true;
+    } catch (_) {
+      // App group / ActivityKit may be unavailable during development installs.
+    }
   }
 
   /// Ends any prior round activity so a new round starts clean.
@@ -112,7 +118,9 @@ class RoundLiveActivityService {
     required List<String> holes,
     required String selectedHole,
     required Map<String, int> scores,
+    required Map<String, int> putts,
     required Map<String, int> pars,
+    required Map<String, int> handicaps,
     required String courseName,
     int? yardsToGreen,
     double? greenLatitude,
@@ -135,7 +143,9 @@ class RoundLiveActivityService {
         'holes': holes,
         'selectedHole': selectedHole,
         'scores': scores,
+        'putts': putts,
         'pars': pars,
+        'handicaps': handicaps,
         'courseName': courseName,
         'yardsToGreen': yardsToGreen ?? -1,
         'greenLatitude': greenLatitude ?? 0,
@@ -178,6 +188,16 @@ class RoundLiveActivityService {
         });
       }
 
+      final putts = <String, int>{};
+      final puttsRaw = result['putts'];
+      if (puttsRaw is Map) {
+        puttsRaw.forEach((key, value) {
+          if (key is String && value is num) {
+            putts[key] = value.toInt();
+          }
+        });
+      }
+
       final pendingGpsPins = <LiveActivityGpsPin>[];
       final pinsRaw = result['pendingGpsPins'];
       if (pinsRaw is List) {
@@ -202,6 +222,7 @@ class RoundLiveActivityService {
         courseName: courseName,
         selectedHole: selectedHole,
         scores: scores,
+        putts: putts,
         revision: revision.toInt(),
         pendingGpsPins: pendingGpsPins,
       );
@@ -413,7 +434,9 @@ class RoundLiveActivityService {
   }
 
   Future<void> _endActivities() async {
-    await _plugin.endAllActivities();
+    try {
+      await _plugin.endAllActivities();
+    } catch (_) {}
     _runningActivityId = null;
     _lastYardsToGreen = null;
     _lastSyncedHole = null;

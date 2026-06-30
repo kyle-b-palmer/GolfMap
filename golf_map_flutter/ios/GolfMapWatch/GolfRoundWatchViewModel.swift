@@ -5,16 +5,11 @@ import Combine
 final class GolfRoundWatchViewModel: ObservableObject {
     @Published private(set) var state: GolfRoundSharedState?
     @Published private(set) var yardsToGreen: Int?
-    @Published private(set) var phoneReachable = false
 
     private var timer: Timer?
     private var cancellables = Set<AnyCancellable>()
 
     init() {
-        WatchConnectivityClient.shared.$phoneReachable
-            .receive(on: RunLoop.main)
-            .assign(to: &$phoneReachable)
-
         WatchLocationManager.shared.$yardsToGreen
             .receive(on: RunLoop.main)
             .sink { [weak self] yards in
@@ -62,15 +57,19 @@ final class GolfRoundWatchViewModel: ObservableObject {
     }
 
     func incrementScore() {
-        guard let updated = GolfRoundWatchStore.shared.adjustCurrentHoleScore(by: 1) else { return }
-        state = updated
-        WatchConnectivityClient.shared.sendStateChange(updated)
+        applyScoreChange(GolfRoundWatchStore.shared.adjustCurrentHoleScore(by: 1))
     }
 
     func decrementScore() {
-        guard let updated = GolfRoundWatchStore.shared.adjustCurrentHoleScore(by: -1) else { return }
-        state = updated
-        WatchConnectivityClient.shared.sendStateChange(updated)
+        applyScoreChange(GolfRoundWatchStore.shared.adjustCurrentHoleScore(by: -1))
+    }
+
+    func setScore(_ score: Int) {
+        applyScoreChange(GolfRoundWatchStore.shared.setCurrentHoleScore(to: score))
+    }
+
+    func setPutts(_ putts: Int) {
+        applyScoreChange(GolfRoundWatchStore.shared.setCurrentHolePutts(to: putts))
     }
 
     func nextHole() {
@@ -91,5 +90,11 @@ final class GolfRoundWatchViewModel: ObservableObject {
             latitude: updated.greenLatitude,
             longitude: updated.greenLongitude
         )
+    }
+
+    private func applyScoreChange(_ updated: GolfRoundSharedState?) {
+        guard let updated else { return }
+        state = updated
+        WatchConnectivityClient.shared.sendStateChange(updated)
     }
 }

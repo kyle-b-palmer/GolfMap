@@ -1,3 +1,6 @@
+import 'dart:io';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../config/app_theme.dart';
@@ -11,6 +14,8 @@ class HoleStatsPanel extends StatelessWidget {
     this.onNextHole,
     this.yardage,
     this.gpsGreenYardages,
+    this.showMapOverlay = true,
+    this.onToggleMapOverlay,
     this.showBunkerDistancesOnMap = false,
     this.onToggleBunkerDistancesOnMap,
     this.onOpenDetails,
@@ -21,6 +26,8 @@ class HoleStatsPanel extends StatelessWidget {
   final VoidCallback? onNextHole;
   final int? yardage;
   final GreenYardages? gpsGreenYardages;
+  final bool showMapOverlay;
+  final ValueChanged<bool>? onToggleMapOverlay;
   final bool showBunkerDistancesOnMap;
   final ValueChanged<bool>? onToggleBunkerDistancesOnMap;
   final VoidCallback? onOpenDetails;
@@ -41,6 +48,18 @@ class HoleStatsPanel extends StatelessWidget {
         if (gpsGreenYardages != null) ...[
           const SizedBox(height: 8),
           _GpsGreenYardageBox(yardages: gpsGreenYardages!),
+        ],
+        if (onToggleMapOverlay != null && !kIsWeb) ...[
+          const SizedBox(height: 8),
+          _SidebarIconButton(
+            icon: Icons.layers_rounded,
+            tooltip: showMapOverlay
+                ? (Platform.isIOS ? 'Hide Apple Maps' : 'Hide map overlay')
+                : (Platform.isIOS ? 'Show Apple Maps' : 'Show map overlay'),
+            active: showMapOverlay,
+            activeColor: AppTheme.accentGreen,
+            onTap: () => onToggleMapOverlay!(!showMapOverlay),
+          ),
         ],
         if (onToggleBunkerDistancesOnMap != null) ...[
           const SizedBox(height: 8),

@@ -4,7 +4,10 @@ import 'package:flutter/services.dart' show rootBundle;
 import 'package:supabase/supabase.dart';
 
 import '../config/app_config.dart';
+import '../models/course_catalog.dart';
 import '../models/golf_feature.dart';
+import '../utils/city_lookup.dart';
+import '../utils/geo_utils.dart';
 
 class GolfDataService {
   GolfDataService({SupabaseClient? client})
@@ -80,12 +83,57 @@ class GolfDataService {
   }
 
   List<String> extractCourses(List<GolfFeature> features) {
-    return features
-        .map((f) => f.courseName)
-        .whereType<String>()
-        .toSet()
-        .toList()
-      ..sort();
+    return buildCourseCatalog(features).map((entry) => entry.name).toList();
+  }
+
+  List<CourseCatalogEntry> buildCourseCatalog(List<GolfFeature> features) {
+    final featuresByCourse = <String, List<GolfFeature>>{};
+
+    for (final feature in features) {
+      final name = feature.courseName?.trim();
+      if (name == null || name.isEmpty) continue;
+      featuresByCourse.putIfAbsent(name, () => []).add(feature);
+    }
+
+    final entries = <CourseCatalogEntry>[];
+
+    for (final courseEntry in featuresByCourse.entries) {
+      final centroids = courseEntry.value
+          .map(centroidOfGolfFeature)
+          .whereType<List<double>>()
+          .toList();
+
+      if (centroids.isEmpty) continue;
+
+      final latitude =
+          centroids.map((point) => point[1]).reduce((a, b) => a + b) /
+              centroids.length;
+      final longitude =
+          centroids.map((point) => point[0]).reduce((a, b) => a + b) /
+              centroids.length;
+      final city = nearestCity(latitude, longitude);
+
+      entries.add(
+        CourseCatalogEntry(
+          name: courseEntry.key,
+          state: city.state,
+          stateCode: city.stateCode,
+          city: city.name,
+          latitude: latitude,
+          longitude: longitude,
+        ),
+      );
+    }
+
+    entries.sort((a, b) {
+      final stateCompare = a.state.compareTo(b.state);
+      if (stateCompare != 0) return stateCompare;
+      final cityCompare = a.city.compareTo(b.city);
+      if (cityCompare != 0) return cityCompare;
+      return a.name.compareTo(b.name);
+    });
+
+    return entries;
   }
 
   List<String> holesForCourse(List<GolfFeature> features, String course) {

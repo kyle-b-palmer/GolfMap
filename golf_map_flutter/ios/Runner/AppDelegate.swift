@@ -7,8 +7,11 @@ import UIKit
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
-    WatchConnectivityBridge.shared.activate()
-    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+    let didFinish = super.application(application, didFinishLaunchingWithOptions: launchOptions)
+    DispatchQueue.main.async {
+      WatchConnectivityBridge.shared.activate()
+    }
+    return didFinish
   }
 
   override func applicationWillEnterForeground(_ application: UIApplication) {

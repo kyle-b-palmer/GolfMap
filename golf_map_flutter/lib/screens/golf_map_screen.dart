@@ -9,12 +9,14 @@ import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import '../config/app_config.dart';
 import '../config/app_theme.dart';
 import '../models/golf_feature.dart';
 import '../models/measurement_chain.dart';
 import '../models/pinned_shot.dart';
 import '../models/saved_round.dart';
 import '../services/app_preferences_service.dart';
+import '../services/course_visit_service.dart';
 import '../services/golf_data_service.dart';
 import '../services/round_live_activity_service.dart';
 import '../services/round_storage_service.dart';
@@ -32,6 +34,7 @@ class GolfMapScreen extends StatefulWidget {
     super.key,
     required this.initialCourse,
     this.initialScores,
+    this.initialPutts,
     this.initialPinnedShots,
     this.existingRoundId,
     this.existingRoundPlayedAt,
@@ -39,6 +42,7 @@ class GolfMapScreen extends StatefulWidget {
 
   final String initialCourse;
   final Map<String, int>? initialScores;
+  final Map<String, int>? initialPutts;
   final Map<String, List<PinnedShot>>? initialPinnedShots;
   final String? existingRoundId;
   final DateTime? existingRoundPlayedAt;
@@ -51,6 +55,7 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
   final _dataService = GolfDataService();
   final _roundStorage = RoundStorageService();
   final _appPrefs = AppPreferencesService();
+  final _courseVisits = CourseVisitService();
   final _liveActivity = RoundLiveActivityService.instance;
   final _mapController = MapController();
   final _mapViewportKey = GlobalKey();
@@ -67,12 +72,14 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
   String _selectedHole = '1';
   HoleStats? _currentHoleStats;
   final Map<String, int> _scores = {};
+  final Map<String, int> _putts = {};
   final Map<String, List<PinnedShot>> _pinnedShots = {};
 
   bool _loading = true;
   bool _mapReady = false;
   bool _idealLineEnabled = true;
   bool _showScoreTarget = true;
+  bool _mapOverlayEnabled = true;
   bool _showBunkerDistancesOnMap = false;
   bool _savingRound = false;
   int? _scoreTargetTotal;
@@ -295,12 +302,17 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
   Future<void> _loadPreferences() async {
     final showScoreTarget = await _appPrefs.getShowScoreTarget();
     final idealLineEnabled = await _appPrefs.getIdealLineEnabled();
+    final mapOverlayEnabled = await _appPrefs.getMapOverlayEnabled();
     if (!mounted) return;
     setState(() {
       _showScoreTarget = showScoreTarget;
       _idealLineEnabled = idealLineEnabled;
+      _mapOverlayEnabled = mapOverlayEnabled;
     });
   }
+
+  MapBackground get _mapBackground =>
+      resolveMapBackground(overlayEnabled: _mapOverlayEnabled);
 
   @override
   void dispose() {
@@ -348,9 +360,17 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
         for (final hole in _holes)
           hole: _scores[_scoreKey(course, hole)] ?? 0,
       },
+      putts: {
+        for (final hole in _holes)
+          hole: _putts[_scoreKey(course, hole)] ?? 0,
+      },
       pars: {
         for (final hole in _holes)
           hole: _dataService.statsForHole(_features, course, hole)?.par ?? 0,
+      },
+      handicaps: {
+        for (final hole in _holes)
+          hole: _dataService.statsForHole(_features, course, hole)?.handicap ?? 0,
       },
       courseName: course,
       yardsToGreen: _yardsToGreenForLiveActivity,
@@ -386,6 +406,9 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
       for (final entry in changes.scores.entries) {
         _scores[_scoreKey(course, entry.key)] = entry.value;
       }
+      for (final entry in changes.putts.entries) {
+        _putts[_scoreKey(course, entry.key)] = entry.value;
+      }
     });
 
     if (holeChanged) {
@@ -406,9 +429,17 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
         for (final hole in _holes)
           hole: _scores[_scoreKey(course, hole)] ?? 0,
       },
+      putts: {
+        for (final hole in _holes)
+          hole: _putts[_scoreKey(course, hole)] ?? 0,
+      },
       pars: {
         for (final hole in _holes)
           hole: _dataService.statsForHole(_features, course, hole)?.par ?? 0,
+      },
+      handicaps: {
+        for (final hole in _holes)
+          hole: _dataService.statsForHole(_features, course, hole)?.handicap ?? 0,
       },
       courseName: course,
       yardsToGreen: _yardsToGreenForLiveActivity,
@@ -482,6 +513,7 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
         _loading = false;
       });
 
+      unawaited(_courseVisits.recordVisit(widget.initialCourse));
       _refreshHoleState();
       if (Platform.isIOS) {
         unawaited(_requestAlwaysLocationIfNeeded());
@@ -612,6 +644,14 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
           _scores[key] = saved;
         } else {
           _scores[key] = 0;
+        }
+      }
+      if (!_putts.containsKey(key)) {
+        final savedPutts = widget.initialPutts?[hole];
+        if (savedPutts != null) {
+          _putts[key] = savedPutts;
+        } else {
+          _putts[key] = 0;
         }
       }
     }
@@ -1290,6 +1330,15 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
     _syncLiveActivity(force: true);
   }
 
+  void _setHolePutts(int putts) {
+    final course = _selectedCourse;
+    if (course == null) return;
+    setState(() {
+      _putts[_scoreKey(course, _selectedHole)] = putts.clamp(0, 9);
+    });
+    _syncLiveActivity(force: true);
+  }
+
   void _selectHole(String hole) {
     _clearDistance();
     _liveActivity.resetGpsThrottle();
@@ -1340,6 +1389,12 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
     final course = _selectedCourse;
     if (course == null) return 0;
     return _scores[_scoreKey(course, _selectedHole)] ?? 0;
+  }
+
+  int get _currentHolePutts {
+    final course = _selectedCourse;
+    if (course == null) return 0;
+    return _putts[_scoreKey(course, _selectedHole)] ?? 0;
   }
 
   int? get _gpsYardsToGreenForLiveActivity {
@@ -1419,6 +1474,7 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
           hole: hole,
           par: _dataService.statsForHole(_features, course, hole)?.par ?? 0,
           score: _scores[_scoreKey(course, hole)] ?? 0,
+          putts: _putts[_scoreKey(course, hole)] ?? 0,
         ),
     ];
   }
@@ -1434,6 +1490,10 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
         for (final hole in _holes)
           hole: _scores[_scoreKey(course, hole)] ?? 0,
       };
+      final putts = <String, int>{
+        for (final hole in _holes)
+          hole: _putts[_scoreKey(course, hole)] ?? 0,
+      };
 
       final round = SavedRound(
         id: widget.existingRoundId ??
@@ -1441,6 +1501,7 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
         courseName: course,
         playedAt: widget.existingRoundPlayedAt ?? DateTime.now(),
         scores: scores,
+        putts: putts,
         pinnedShots: {
           for (final entry in _pinnedShots.entries)
             if (entry.value.isNotEmpty)
@@ -1576,6 +1637,7 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
             key: ValueKey('golf-map-$_selectedCourse'),
             mapController: _mapController,
             mapVisualEpoch: _mapVisualEpoch,
+            mapBackground: _mapBackground,
             features: _features,
             selectedCourse: _selectedCourse,
             selectedHole: _selectedHole,
@@ -1693,6 +1755,12 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
                   onNextHole: _holes.length > 1 ? _goToNextHole : null,
                   yardage: _holeYardage,
                   gpsGreenYardages: _gpsGreenYardages,
+                  showMapOverlay: _mapOverlayEnabled,
+                  onToggleMapOverlay: (value) {
+                    setState(() => _mapOverlayEnabled = value);
+                    unawaited(_appPrefs.setMapOverlayEnabled(value));
+                    _wakeMapAfterCameraMove();
+                  },
                   showBunkerDistancesOnMap: _showBunkerDistancesOnMap,
                   onToggleBunkerDistancesOnMap: (value) {
                     setState(() => _showBunkerDistancesOnMap = value);
@@ -1742,6 +1810,7 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
               ScorePanel(
                 par: _currentHoleStats?.par ?? 0,
                 currentHoleScore: _currentHoleScore,
+                currentHolePutts: _currentHolePutts,
                 totalScore: _totalScore,
                 scorecardLines: _scorecardLines,
                 courseName: _selectedCourse ?? 'Course',
@@ -1757,6 +1826,7 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
                   setState(() => _scoreTargetTotal = target);
                 },
                 onScoreChanged: _setHoleScore,
+                onPuttsChanged: _setHolePutts,
               ),
             ],
           ),

@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Golf Map Flutter</string>
+	<string>South Texas Golf Tracker</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -29,11 +29,11 @@
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Golf Map uses your location to measure shot distances on the course.</string>
+	<string>South Texas Golf Tracker uses your location to measure shot distances on the course.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>Golf Map updates live yardage on your lock screen while you play a round.</string>
+	<string>South Texas Golf Tracker updates live yardage on your lock screen while you play a round.</string>
 	<key>NSLocationAlwaysUsageDescription</key>
-	<string>Golf Map updates live yardage on your lock screen while you play a round.</string>
+	<string>South Texas Golf Tracker updates live yardage on your lock screen while you play a round.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>location</string>

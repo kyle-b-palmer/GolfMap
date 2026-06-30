@@ -46,7 +46,9 @@ final class LiveActivityBridge: NSObject, FlutterPlugin, FlutterStreamHandler {
                 return
             }
             let scores = intMap(from: args["scores"])
+            let putts = intMap(from: args["putts"])
             let pars = intMap(from: args["pars"])
+            let handicaps = intMap(from: args["handicaps"])
             let yardsToGreen = args["yardsToGreen"] as? Int ?? -1
             let greenLatitude = args["greenLatitude"] as? Double ?? 0
             let greenLongitude = args["greenLongitude"] as? Double ?? 0
@@ -54,7 +56,9 @@ final class LiveActivityBridge: NSObject, FlutterPlugin, FlutterStreamHandler {
                 holes: holes,
                 selectedHole: selectedHole,
                 scores: scores,
+                putts: putts,
                 pars: pars,
+                handicaps: handicaps,
                 courseName: courseName,
                 yardsToGreen: yardsToGreen,
                 revision: revision,
@@ -74,6 +78,7 @@ final class LiveActivityBridge: NSObject, FlutterPlugin, FlutterStreamHandler {
                 greenLatitude: greenLatitude,
                 greenLongitude: greenLongitude
             )
+            WatchConnectivityBridge.shared.pushRoundStateIfNeeded()
             result(nil)
         case "getSharedGpsYardage":
             guard let state = GolfRoundLiveActivityController.shared.loadState() else {
@@ -94,6 +99,7 @@ final class LiveActivityBridge: NSObject, FlutterPlugin, FlutterStreamHandler {
                 "courseName": state.courseName,
                 "selectedHole": state.selectedHole,
                 "scores": state.scores,
+                "putts": state.putts,
                 "revision": state.revision,
                 "pendingGpsPins": state.pendingGpsPins.map { pin in
                     [

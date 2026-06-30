@@ -1,11 +1,17 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../config/app_theme.dart';
+import '../models/course_catalog.dart';
 import '../models/saved_round.dart';
+import '../services/course_favorites_service.dart';
+import '../services/course_visit_service.dart';
 import '../services/golf_data_service.dart';
 import '../services/round_live_activity_service.dart';
 import '../services/round_storage_service.dart';
+import '../widgets/course_catalog_list.dart';
 import 'golf_map_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -18,8 +24,12 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final _dataService = GolfDataService();
   final _roundStorage = RoundStorageService();
+  final _courseVisits = CourseVisitService();
+  final _courseFavorites = CourseFavoritesService();
 
-  List<String> _courses = [];
+  List<CourseCatalogEntry> _courseCatalog = [];
+  List<CommonlyVisitedEntry> _commonlyVisited = [];
+  List<String> _favoriteCourses = [];
   List<SavedRound> _savedRounds = [];
   bool _loading = true;
   String? _error;
@@ -27,13 +37,19 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    _clearStaleLiveActivity();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_clearStaleLiveActivity());
+    });
     _load();
   }
 
   Future<void> _clearStaleLiveActivity() async {
-    await RoundLiveActivityService.instance.init();
-    await RoundLiveActivityService.instance.end();
+    try {
+      await RoundLiveActivityService.instance.init();
+      await RoundLiveActivityService.instance.end();
+    } catch (_) {
+      // Live Activity cleanup is best-effort; don't take down app launch.
+    }
   }
 
   Future<void> _load() async {
@@ -44,12 +60,17 @@ class _HomeScreenState extends State<HomeScreen> {
 
     try {
       final features = await _dataService.fetchGolfFeatures();
-      final courses = _dataService.extractCourses(features);
+      final catalog = _dataService.buildCourseCatalog(features);
       final rounds = await _roundStorage.loadRounds();
+      final commonlyVisited =
+          await _courseVisits.commonlyVisited(savedRounds: rounds);
+      final favorites = await _courseFavorites.loadFavorites();
 
       if (!mounted) return;
       setState(() {
-        _courses = courses;
+        _courseCatalog = catalog;
+        _commonlyVisited = commonlyVisited;
+        _favoriteCourses = favorites;
         _savedRounds = rounds;
         _loading = false;
       });
@@ -62,24 +83,48 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  Future<void> _toggleFavorite(String course) async {
+    final result = await _courseFavorites.toggle(course);
+    if (!mounted) return;
+
+    switch (result) {
+      case FavoriteToggleResult.added:
+      case FavoriteToggleResult.removed:
+        final favorites = await _courseFavorites.loadFavorites();
+        if (!mounted) return;
+        setState(() => _favoriteCourses = favorites);
+      case FavoriteToggleResult.limitReached:
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'You can pin up to ${CourseFavoritesService.maxFavorites} courses. '
+              'Unstar one to add another.',
+            ),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    }
+  }
+
   Future<void> _startRound(String course) async {
     if (!mounted) return;
-    final saved = await Navigator.of(context).push<bool>(
+    await Navigator.of(context).push<bool>(
       MaterialPageRoute(
         builder: (_) => GolfMapScreen(initialCourse: course),
       ),
     );
     await RoundLiveActivityService.instance.end();
-    if (saved == true && mounted) _load();
+    if (mounted) _load();
   }
 
   Future<void> _openRound(SavedRound round) async {
     if (!mounted) return;
-    final saved = await Navigator.of(context).push<bool>(
+    await Navigator.of(context).push<bool>(
       MaterialPageRoute(
         builder: (_) => GolfMapScreen(
           initialCourse: round.courseName,
           initialScores: round.scores,
+          initialPutts: round.putts,
           initialPinnedShots: round.pinnedShots,
           existingRoundId: round.id,
           existingRoundPlayedAt: round.playedAt,
@@ -87,7 +132,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
     await RoundLiveActivityService.instance.end();
-    if (saved == true && mounted) _load();
+    if (mounted) _load();
   }
 
   Future<void> _deleteRound(SavedRound round) async {
@@ -184,7 +229,7 @@ class _HomeScreenState extends State<HomeScreen> {
         padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
         children: [
           const Text(
-            'Golf Map',
+            'South Texas Golf Tracker',
             style: TextStyle(
               color: Colors.white,
               fontSize: 28,
@@ -197,20 +242,35 @@ class _HomeScreenState extends State<HomeScreen> {
             style: TextStyle(color: AppTheme.textMuted, fontSize: 14),
           ),
           const SizedBox(height: 28),
+          if (_favoriteCourses.isNotEmpty) ...[
+            const _SectionTitle(title: 'Favorites'),
+            const SizedBox(height: 10),
+            FavoritesSection(
+              favoriteCourses: _favoriteCourses,
+              catalog: _courseCatalog,
+              onSelectCourse: _startRound,
+              onToggleFavorite: _toggleFavorite,
+            ),
+          ],
+          if (_commonlyVisited.isNotEmpty) ...[
+            const _SectionTitle(title: 'Commonly visited'),
+            const SizedBox(height: 10),
+            CommonlyVisitedSection(
+              entries: _commonlyVisited,
+              catalog: _courseCatalog,
+              favoriteCourses: _favoriteCourses.toSet(),
+              onSelectCourse: _startRound,
+              onToggleFavorite: _toggleFavorite,
+            ),
+          ],
           const _SectionTitle(title: 'Start a round'),
           const SizedBox(height: 10),
-          if (_courses.isEmpty)
-            const _EmptyCard(message: 'No courses available.')
-          else
-            ..._courses.map(
-              (course) => Padding(
-                padding: const EdgeInsets.only(bottom: 10),
-                child: _CourseCard(
-                  course: course,
-                  onTap: () => _startRound(course),
-                ),
-              ),
-            ),
+          CourseCatalogList(
+            entries: _courseCatalog,
+            favoriteCourses: _favoriteCourses.toSet(),
+            onSelectCourse: _startRound,
+            onToggleFavorite: _toggleFavorite,
+          ),
           const SizedBox(height: 28),
           const _SectionTitle(title: 'Saved rounds'),
           const SizedBox(height: 10),
@@ -273,65 +333,6 @@ class _EmptyCard extends StatelessWidget {
       child: Text(
         message,
         style: const TextStyle(color: AppTheme.textMuted, fontSize: 13),
-      ),
-    );
-  }
-}
-
-class _CourseCard extends StatelessWidget {
-  const _CourseCard({required this.course, required this.onTap});
-
-  final String course;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: AppTheme.panelBg,
-      borderRadius: BorderRadius.circular(14),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(14),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: AppTheme.panelBorder),
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: AppTheme.accentGreen.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: const Icon(
-                  Icons.golf_course_rounded,
-                  color: AppTheme.accentGreen,
-                  size: 22,
-                ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Text(
-                  course,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-              const Icon(
-                Icons.arrow_forward_ios_rounded,
-                color: AppTheme.textMuted,
-                size: 16,
-              ),
-            ],
-          ),
-        ),
       ),
     );
   }

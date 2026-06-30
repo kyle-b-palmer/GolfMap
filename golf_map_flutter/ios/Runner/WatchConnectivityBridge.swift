@@ -20,17 +20,12 @@ final class WatchConnectivityBridge: NSObject, WCSessionDelegate {
 
         let session = WCSession.default
         guard session.activationState == .activated else { return }
+        guard let state = GolfRoundLiveActivityController.shared.loadState(),
+              !state.holes.isEmpty,
+              !state.courseName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return
+        }
 
-        let state = GolfRoundLiveActivityController.shared.loadState()
-            ?? GolfRoundSharedState(
-                holes: [],
-                selectedHole: "1",
-                scores: [:],
-                pars: [:],
-                courseName: "",
-                yardsToGreen: -1,
-                revision: 0
-            )
         let payload = roundPayload(for: state)
 
         do {
@@ -73,6 +68,7 @@ final class WatchConnectivityBridge: NSObject, WCSessionDelegate {
             guard incoming.revision > current.revision else { return }
             var updated = current
             updated.scores = incoming.scores
+            updated.putts = incoming.putts
             updated.selectedHole = incoming.selectedHole
             updated.revision = incoming.revision
             GolfRoundLiveActivityController.shared.saveState(updated)

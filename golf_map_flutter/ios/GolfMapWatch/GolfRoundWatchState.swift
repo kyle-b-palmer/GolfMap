@@ -10,7 +10,9 @@ struct GolfRoundSharedState: Codable, Equatable {
     var holes: [String]
     var selectedHole: String
     var scores: [String: Int]
+    var putts: [String: Int]
     var pars: [String: Int]
+    var handicaps: [String: Int]
     var courseName: String
     var yardsToGreen: Int
     var revision: Int
@@ -26,7 +28,9 @@ struct GolfRoundSharedState: Codable, Equatable {
         holes: [String] = [],
         selectedHole: String = "1",
         scores: [String: Int] = [:],
+        putts: [String: Int] = [:],
         pars: [String: Int] = [:],
+        handicaps: [String: Int] = [:],
         courseName: String = "",
         yardsToGreen: Int = -1,
         revision: Int = 0,
@@ -38,7 +42,9 @@ struct GolfRoundSharedState: Codable, Equatable {
         self.holes = holes
         self.selectedHole = selectedHole
         self.scores = scores
+        self.putts = putts
         self.pars = pars
+        self.handicaps = handicaps
         self.courseName = courseName
         self.yardsToGreen = yardsToGreen
         self.revision = revision
@@ -53,7 +59,9 @@ struct GolfRoundSharedState: Codable, Equatable {
         holes = try container.decode([String].self, forKey: .holes)
         selectedHole = try container.decode(String.self, forKey: .selectedHole)
         scores = try container.decode([String: Int].self, forKey: .scores)
+        putts = try container.decodeIfPresent([String: Int].self, forKey: .putts) ?? [:]
         pars = try container.decode([String: Int].self, forKey: .pars)
+        handicaps = try container.decodeIfPresent([String: Int].self, forKey: .handicaps) ?? [:]
         courseName = try container.decode(String.self, forKey: .courseName)
         yardsToGreen = try container.decode(Int.self, forKey: .yardsToGreen)
         revision = try container.decode(Int.self, forKey: .revision)
@@ -67,15 +75,29 @@ struct GolfRoundSharedState: Codable, Equatable {
     }
 
     var isActiveRound: Bool {
-        !holes.isEmpty && !courseName.isEmpty
+        !holes.isEmpty && !courseName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var currentPar: Int {
         pars[selectedHole] ?? 0
     }
 
+    var currentHandicap: Int {
+        handicaps[selectedHole] ?? 0
+    }
+
     var currentHoleScore: Int {
         scores[selectedHole] ?? 0
+    }
+
+    var currentHolePutts: Int {
+        putts[selectedHole] ?? 0
+    }
+
+    var totalPutts: Int {
+        holes.reduce(0) { partial, hole in
+            partial + (putts[hole] ?? 0)
+        }
     }
 
     var totalScore: Int {
@@ -132,6 +154,7 @@ final class GolfRoundWatchStore {
     }
 
     func applyPhoneState(_ state: GolfRoundSharedState) {
+        guard state.isActiveRound else { return }
         save(state)
     }
 
@@ -141,6 +164,26 @@ final class GolfRoundWatchStore {
         let hole = state.selectedHole
         let current = state.scores[hole] ?? 0
         state.scores[hole] = max(0, min(99, current + delta))
+        state.revision += 1
+        save(state)
+        return state
+    }
+
+    @discardableResult
+    func setCurrentHoleScore(to score: Int) -> GolfRoundSharedState? {
+        guard var state = load(), state.isActiveRound else { return nil }
+        let hole = state.selectedHole
+        state.scores[hole] = max(0, min(99, score))
+        state.revision += 1
+        save(state)
+        return state
+    }
+
+    @discardableResult
+    func setCurrentHolePutts(to putts: Int) -> GolfRoundSharedState? {
+        guard var state = load(), state.isActiveRound else { return nil }
+        let hole = state.selectedHole
+        state.putts[hole] = max(0, min(9, putts))
         state.revision += 1
         save(state)
         return state

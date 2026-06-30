@@ -64,6 +64,10 @@ struct GolfRoundLiveActivityWidget: Widget {
                     .font(.caption2.weight(.bold))
             }
         }
+        // iOS only — do not opt into .small (watchOS Smart Stack). The system may
+        // still mirror a compact Live Activity to Apple Watch; users can disable
+        // that under Watch Settings → Smart Stack → Live Activities.
+        .supplementalActivityFamilies([.medium])
     }
 
     private var accentGreen: Color {

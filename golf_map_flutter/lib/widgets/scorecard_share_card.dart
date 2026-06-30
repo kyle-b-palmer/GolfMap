@@ -136,7 +136,7 @@ class ScorecardShareCard extends StatelessWidget {
               _ScoreList(lines: lines),
             const SizedBox(height: 14),
             Text(
-              'Golf Map',
+              'South Texas Golf Tracker',
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: Colors.white.withValues(alpha: 0.35),

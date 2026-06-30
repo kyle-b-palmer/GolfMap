@@ -11,6 +11,7 @@ import '../models/golf_feature.dart';
 import '../models/measurement_chain.dart';
 import '../models/pinned_shot.dart';
 import '../utils/geo_utils.dart';
+import 'apple_maps_backdrop.dart';
 import 'map_marker_graphics.dart';
 
 class GolfMapView extends StatefulWidget {
@@ -18,6 +19,7 @@ class GolfMapView extends StatefulWidget {
     super.key,
     required this.mapController,
     this.mapVisualEpoch = 0,
+    this.mapBackground = MapBackground.courseOnly,
     required this.features,
     required this.selectedCourse,
     required this.selectedHole,
@@ -44,6 +46,7 @@ class GolfMapView extends StatefulWidget {
 
   final MapController mapController;
   final int mapVisualEpoch;
+  final MapBackground mapBackground;
   final List<GolfFeature> features;
   final String? selectedCourse;
   final String selectedHole;
@@ -78,6 +81,7 @@ class _GolfMapViewState extends State<GolfMapView> {
   DateTime? _lastDragNotify;
   List<Widget> _baseLayers = [];
   double _calloutZoom = 15;
+  final _appleBackdropKey = GlobalKey<AppleMapsBackdropState>();
 
   static const _lockedHitTarget = 30.0;
   static const _lockedPinHitPixels = 30.0;
@@ -304,13 +308,18 @@ class _GolfMapViewState extends State<GolfMapView> {
         oldWidget.selectedTeeFeatureId != widget.selectedTeeFeatureId ||
         oldWidget.usingGpsForShot != widget.usingGpsForShot ||
         oldWidget.greenCenter != widget.greenCenter ||
+        oldWidget.mapBackground != widget.mapBackground ||
         oldWidget.mapVisualEpoch != widget.mapVisualEpoch;
     if (layersChanged) {
       _rebuildBaseLayers();
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         setState(() {});
+        _syncAppleBackdrop();
       });
+    }
+    if (oldWidget.mapVisualEpoch != widget.mapVisualEpoch) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _syncAppleBackdrop());
     }
     if (oldWidget.lockedMeasurementPoints != widget.lockedMeasurementPoints &&
         _draggingLockedIndex == null) {
@@ -320,14 +329,28 @@ class _GolfMapViewState extends State<GolfMapView> {
 
   static const _courseMapBackground = Color(0xFF1A3328);
 
+  bool get _usesAppleBackdrop => useAppleMapsBackdrop(widget.mapBackground);
+
+  Color get _mapBackgroundColor {
+    if (_usesAppleBackdrop) return Colors.transparent;
+    if (widget.mapBackground == MapBackground.courseOnly) {
+      return _courseMapBackground;
+    }
+    return const Color(0xFFE8E8E8);
+  }
+
+  void _syncAppleBackdrop() {
+    _appleBackdropKey.currentState?.syncFromFlutterMap();
+  }
+
   void _rebuildBaseLayers() {
-    final courseOnly = AppConfig.mapBackground == MapBackground.courseOnly;
+    final courseOnly = widget.mapBackground == MapBackground.courseOnly;
     final inactiveFairwayOpacity = courseOnly ? 0.07 : 0.03;
     final inactiveGreenOpacity = courseOnly ? 0.05 : 0.03;
     final inactiveBunkerOpacity = courseOnly ? 0.06 : 0.035;
 
     _baseLayers = [
-      if (AppConfig.mapBackground == MapBackground.openStreetMap)
+      if (widget.mapBackground == MapBackground.openStreetMap)
         TileLayer(
           urlTemplate: AppConfig.openStreetMapTileUrl,
           userAgentPackageName: 'com.golfmapapp.golf_map_flutter',
@@ -354,12 +377,10 @@ class _GolfMapViewState extends State<GolfMapView> {
 
   @override
   Widget build(BuildContext context) {
-    return FlutterMap(
+    final map = FlutterMap(
       mapController: widget.mapController,
       options: MapOptions(
-        backgroundColor: AppConfig.mapBackground == MapBackground.courseOnly
-            ? _courseMapBackground
-            : const Color(0xFFE8E8E8),
+        backgroundColor: _mapBackgroundColor,
         initialCenter: LatLng(
           AppConfig.defaultCenter[0],
           AppConfig.defaultCenter[1],
@@ -397,8 +418,14 @@ class _GolfMapViewState extends State<GolfMapView> {
           }
           widget.onTap(point);
         },
-        onMapReady: widget.onMapReady,
-        onPositionChanged: (camera, _) => _updateCalloutZoom(camera.zoom),
+        onMapReady: () {
+          widget.onMapReady();
+          _syncAppleBackdrop();
+        },
+        onPositionChanged: (camera, _) {
+          _updateCalloutZoom(camera.zoom);
+          _syncAppleBackdrop();
+        },
         interactionOptions: InteractionOptions(
           flags: _pinInteractionActive
               ? InteractiveFlag.pinchZoom |
@@ -409,7 +436,7 @@ class _GolfMapViewState extends State<GolfMapView> {
       ),
       children: [
         ..._baseLayers,
-        if (AppConfig.mapBackground == MapBackground.openStreetMap)
+        if (widget.mapBackground == MapBackground.openStreetMap)
           RichAttributionWidget(
             attributions: [
               TextSourceAttribution(
@@ -430,6 +457,19 @@ class _GolfMapViewState extends State<GolfMapView> {
           _uprightMarkerLayer([_buildGreenYardageCallout()]),
         if (widget.bunkerDistances.isNotEmpty)
           _uprightMarkerLayer(_buildBunkerDistanceMarkers()),
+      ],
+    );
+
+    if (!_usesAppleBackdrop) return map;
+
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        AppleMapsBackdrop(
+          key: _appleBackdropKey,
+          mapController: widget.mapController,
+        ),
+        map,
       ],
     );
   }

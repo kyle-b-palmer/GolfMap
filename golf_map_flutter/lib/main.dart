@@ -19,7 +19,7 @@ class GolfMapApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Golf Map',
+      title: 'South Texas Golf Tracker',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         brightness: Brightness.dark,

@@ -6,17 +6,23 @@ class SavedRound {
     required this.courseName,
     required this.playedAt,
     required this.scores,
+    Map<String, int>? putts,
     Map<String, List<PinnedShot>>? pinnedShots,
-  }) : pinnedShots = pinnedShots ?? const {};
+  })  : putts = putts ?? const {},
+        pinnedShots = pinnedShots ?? const {};
 
   final String id;
   final String courseName;
   final DateTime playedAt;
   final Map<String, int> scores;
+  final Map<String, int> putts;
   final Map<String, List<PinnedShot>> pinnedShots;
 
   int get totalStrokes =>
       scores.values.fold<int>(0, (sum, strokes) => sum + strokes);
+
+  int get totalPutts =>
+      putts.values.fold<int>(0, (sum, value) => sum + value);
 
   int get holesScored =>
       scores.values.where((strokes) => strokes > 0).length;
@@ -40,11 +46,22 @@ class SavedRound {
       });
     }
 
+    final rawPutts = json['putts'];
+    final putts = <String, int>{};
+    if (rawPutts is Map) {
+      rawPutts.forEach((hole, value) {
+        if (value is num) {
+          putts[hole.toString()] = value.toInt();
+        }
+      });
+    }
+
     return SavedRound(
       id: json['id'] as String,
       courseName: json['courseName'] as String,
       playedAt: DateTime.parse(json['playedAt'] as String),
       scores: scores,
+      putts: putts,
       pinnedShots: _parsePinnedShots(json['pinnedShots']),
     );
   }
@@ -78,6 +95,7 @@ class SavedRound {
         'courseName': courseName,
         'playedAt': playedAt.toIso8601String(),
         'scores': scores,
+        'putts': putts,
         'pinnedShots': pinnedShots.map(
           (hole, shots) => MapEntry(
             hole,

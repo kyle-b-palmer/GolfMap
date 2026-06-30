@@ -1,3 +1,7 @@
+import 'dart:io';
+
+import 'package:flutter/foundation.dart';
+
 /// How the map background is rendered.
 enum MapBackground {
   /// Course polygons on a solid rough-colored background. Free and fully offline.
@@ -5,6 +9,16 @@ enum MapBackground {
 
   /// OpenStreetMap street map tiles. Free, but needs network and OSM attribution.
   openStreetMap,
+
+  /// Apple Maps (MapKit) under course overlays. iOS only.
+  appleMaps,
+}
+
+MapBackground resolveMapBackground({required bool overlayEnabled}) {
+  if (!overlayEnabled) return MapBackground.courseOnly;
+  if (!kIsWeb && Platform.isIOS) return MapBackground.appleMaps;
+  if (!kIsWeb) return MapBackground.openStreetMap;
+  return MapBackground.courseOnly;
 }
 
 class AppConfig {
@@ -18,9 +32,6 @@ class AppConfig {
 
   /// When true, load course GPS from the bundled asset instead of Supabase.
   static const useBundledCourseData = true;
-
-  /// No Mapbox — use course-only (default) or free OpenStreetMap tiles.
-  static const mapBackground = MapBackground.courseOnly;
 
   static const openStreetMapTileUrl =
       'https://tile.openstreetmap.org/{z}/{x}/{y}.png';

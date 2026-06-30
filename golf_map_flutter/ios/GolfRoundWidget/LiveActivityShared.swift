@@ -13,7 +13,9 @@ struct GolfRoundSharedState: Codable {
     var holes: [String]
     var selectedHole: String
     var scores: [String: Int]
+    var putts: [String: Int]
     var pars: [String: Int]
+    var handicaps: [String: Int]
     var courseName: String
     var yardsToGreen: Int
     var revision: Int
@@ -30,7 +32,9 @@ struct GolfRoundSharedState: Codable {
         holes: [String],
         selectedHole: String,
         scores: [String: Int],
+        putts: [String: Int] = [:],
         pars: [String: Int],
+        handicaps: [String: Int] = [:],
         courseName: String,
         yardsToGreen: Int,
         revision: Int,
@@ -42,7 +46,9 @@ struct GolfRoundSharedState: Codable {
         self.holes = holes
         self.selectedHole = selectedHole
         self.scores = scores
+        self.putts = putts
         self.pars = pars
+        self.handicaps = handicaps
         self.courseName = courseName
         self.yardsToGreen = yardsToGreen
         self.revision = revision
@@ -57,7 +63,9 @@ struct GolfRoundSharedState: Codable {
         holes = try container.decode([String].self, forKey: .holes)
         selectedHole = try container.decode(String.self, forKey: .selectedHole)
         scores = try container.decode([String: Int].self, forKey: .scores)
+        putts = try container.decodeIfPresent([String: Int].self, forKey: .putts) ?? [:]
         pars = try container.decode([String: Int].self, forKey: .pars)
+        handicaps = try container.decodeIfPresent([String: Int].self, forKey: .handicaps) ?? [:]
         courseName = try container.decode(String.self, forKey: .courseName)
         yardsToGreen = try container.decode(Int.self, forKey: .yardsToGreen)
         revision = try container.decode(Int.self, forKey: .revision)
@@ -113,7 +121,9 @@ final class GolfRoundLiveActivityController {
         holes: [String],
         selectedHole: String,
         scores: [String: Int],
+        putts: [String: Int] = [:],
         pars: [String: Int],
+        handicaps: [String: Int] = [:],
         courseName: String,
         yardsToGreen: Int,
         revision: Int,
@@ -125,7 +135,9 @@ final class GolfRoundLiveActivityController {
             holes: holes,
             selectedHole: selectedHole,
             scores: scores,
+            putts: putts,
             pars: pars,
+            handicaps: handicaps,
             courseName: courseName,
             yardsToGreen: yardsToGreen,
             revision: revision,
