@@ -35,6 +35,7 @@ class LiveActivityWidgetChanges {
     required this.putts,
     required this.revision,
     this.pendingGpsPins = const [],
+    this.pendingGpsPinUndos = const [],
   });
 
   final String courseName;
@@ -43,6 +44,7 @@ class LiveActivityWidgetChanges {
   final Map<String, int> putts;
   final int revision;
   final List<LiveActivityGpsPin> pendingGpsPins;
+  final List<LiveActivityGpsPin> pendingGpsPinUndos;
 }
 
 /// Syncs in-round golf data to an iOS Live Activity (lock screen + Dynamic Island).
@@ -72,9 +74,9 @@ class RoundLiveActivityService {
   int get session => _session;
   int get interactiveRevision => _interactiveRevision;
 
-  Stream<void> get foregroundStream => _foregroundEvents
+  Stream<String> get stateChangeStream => _foregroundEvents
       .receiveBroadcastStream()
-      .map((_) {})
+      .map((event) => event is String ? event : 'foreground')
       .handleError((_) {});
 
   Future<void> init() async {
@@ -129,9 +131,9 @@ class RoundLiveActivityService {
   }) async {
     if (!isSupported) return;
     if (!await supportsInteractiveControls()) return;
-    if (revision == null && await sharedRevision() > _interactiveRevision) return;
 
-    final nextRevision = revision ?? ++_interactiveRevision;
+    final nextRevision = revision ?? await _nextInteractiveRevision();
+
     if (revision == null) {
       _interactiveRevision = nextRevision;
     } else {
@@ -152,11 +154,27 @@ class RoundLiveActivityService {
         'greenLongitude': greenLongitude ?? 0,
         'revision': nextRevision,
       });
+      await pushWatchRoundState();
     } catch (_) {
       if (revision == null) {
         _interactiveRevision--;
       }
     }
+  }
+
+  Future<int> _nextInteractiveRevision() async {
+    final shared = await sharedRevision();
+    if (shared > _interactiveRevision) {
+      _interactiveRevision = shared;
+    }
+    return _interactiveRevision + 1;
+  }
+
+  Future<void> pushWatchRoundState() async {
+    if (!isSupported) return;
+    try {
+      await _bridge.invokeMethod<void>('pushWatchRoundState');
+    } catch (_) {}
   }
 
   Future<LiveActivityWidgetChanges?> consumeWidgetChanges() async {
@@ -218,6 +236,26 @@ class RoundLiveActivityService {
         }
       }
 
+      final pendingGpsPinUndos = <LiveActivityGpsPin>[];
+      final undosRaw = result['pendingGpsPinUndos'];
+      if (undosRaw is List) {
+        for (final item in undosRaw) {
+          if (item is! Map) continue;
+          final hole = item['hole'];
+          final latitude = item['latitude'];
+          final longitude = item['longitude'];
+          if (hole is String && latitude is num && longitude is num) {
+            pendingGpsPinUndos.add(
+              LiveActivityGpsPin(
+                hole: hole,
+                latitude: latitude.toDouble(),
+                longitude: longitude.toDouble(),
+              ),
+            );
+          }
+        }
+      }
+
       final changes = LiveActivityWidgetChanges(
         courseName: courseName,
         selectedHole: selectedHole,
@@ -225,6 +263,7 @@ class RoundLiveActivityService {
         putts: putts,
         revision: revision.toInt(),
         pendingGpsPins: pendingGpsPins,
+        pendingGpsPinUndos: pendingGpsPinUndos,
       );
       _interactiveRevision = changes.revision;
       return changes;
@@ -247,6 +286,34 @@ class RoundLiveActivityService {
     if (!isSupported) return;
     try {
       await _bridge.invokeMethod<void>('acknowledgePendingGpsPins');
+    } catch (_) {}
+  }
+
+  Future<void> clearPendingGpsPinUndos() async {
+    if (!isSupported) return;
+    try {
+      await _bridge.invokeMethod<void>('clearPendingGpsPinUndos');
+    } catch (_) {}
+  }
+
+  Future<void> reportPinnedShotRemoved({
+    required String hole,
+    required double latitude,
+    required double longitude,
+    required Map<String, int> scores,
+  }) async {
+    if (!isSupported) return;
+    if (!await supportsInteractiveControls()) return;
+
+    try {
+      await _bridge.invokeMethod<void>('reportPinnedShotRemoved', {
+        'hole': hole,
+        'latitude': latitude,
+        'longitude': longitude,
+        'scores': scores,
+      });
+      _interactiveRevision++;
+      await pushWatchRoundState();
     } catch (_) {}
   }
 

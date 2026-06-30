@@ -21,14 +21,36 @@ cd "$ROOT"
 
 CONFIGURATION="Release"
 DEVICE_NAME=""
+WATCH_NAME=""
 DO_CLEAN=0
 
-for arg in "$@"; do
-  case "$arg" in
-    --release) CONFIGURATION="Release" ;;
-    --debug) CONFIGURATION="Debug" ;;
-    --clean) DO_CLEAN=1 ;;
-    *) DEVICE_NAME="$arg" ;;
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --release)
+      CONFIGURATION="Release"
+      shift
+      ;;
+    --debug)
+      CONFIGURATION="Debug"
+      shift
+      ;;
+    --clean)
+      DO_CLEAN=1
+      shift
+      ;;
+    --watch)
+      shift
+      WATCH_NAME="${1:-}"
+      shift
+      ;;
+    *)
+      if [[ -z "$DEVICE_NAME" ]]; then
+        DEVICE_NAME="$1"
+      elif [[ -z "$WATCH_NAME" ]]; then
+        WATCH_NAME="$1"
+      fi
+      shift
+      ;;
   esac
 done
 
@@ -120,24 +142,62 @@ for device in devices:
 }
 
 resolve_watch_core_device_id() {
+  local watch_name="${1:-}"
   xcrun devicectl list devices --json-output - 2>/dev/null | python3 -c "
 import json, sys
 
+watch_name = sys.argv[1].strip().lower()
 devices = json.load(sys.stdin).get('result', {}).get('devices', [])
-connected = []
-for device in devices:
+
+def watch_rank(device):
     platform = device.get('hardwareProperties', {}).get('platform', '')
     if platform != 'watchOS':
-        continue
-    if device.get('connectionProperties', {}).get('tunnelState') != 'connected':
-        continue
-    connected.append(device)
+        return -1
+    props = device.get('connectionProperties', {})
+    tunnel = props.get('tunnelState', '')
+    pairing = props.get('pairingState', '')
+    if tunnel == 'connected':
+        return 4
+    if tunnel == 'connecting':
+        return 3
+    if pairing == 'paired':
+        return 2
+    if tunnel in ('', 'disconnected') and device.get('deviceProperties', {}).get('name'):
+        return 1
+    return 0
 
-if not connected:
+candidates = []
+for device in devices:
+    rank = watch_rank(device)
+    if rank < 0:
+        continue
+    name = device.get('deviceProperties', {}).get('name', '').lower()
+    if watch_name and name and watch_name not in name:
+        continue
+    candidates.append((rank, device))
+
+if not candidates:
     sys.exit(0)
 
-print(connected[0]['identifier'])
-" 2>/dev/null || true
+candidates.sort(key=lambda item: item[0], reverse=True)
+print(candidates[0][1]['identifier'])
+" "$watch_name" 2>/dev/null || true
+}
+
+wait_for_watch_device() {
+  local watch_name="${1:-}"
+  local attempts="${2:-20}"
+  local device_id=""
+  echo "==> Looking for paired Apple Watch (unlock watch, keep it near iPhone)..." >&2
+  for ((i = 1; i <= attempts; i++)); do
+    device_id="$(resolve_watch_core_device_id "$watch_name")"
+    if [[ -n "$device_id" ]]; then
+      echo "$device_id"
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
 }
 
 resolve_built_runner_app() {
@@ -327,21 +387,27 @@ fi
 install_runner_app "$CORE_DEVICE_ID" "$RUNNER_APP"
 
 WATCH_APP="$RUNNER_APP/Watch/GolfMapWatch.app"
-WATCH_CORE_DEVICE_ID="$(resolve_watch_core_device_id)"
+WATCH_CORE_DEVICE_ID="$(wait_for_watch_device "$WATCH_NAME" 20 || true)"
 if [[ -n "$WATCH_CORE_DEVICE_ID" && -d "$WATCH_APP" ]]; then
   install_watch_app "$WATCH_CORE_DEVICE_ID" "$WATCH_APP"
 else
-  echo "==> No connected Apple Watch found for direct install."
-  echo "    Open the Watch app on iPhone after launch to sync the companion."
+  echo "==> Could not install directly to Apple Watch."
+  echo "    Unlock your watch, keep it on your wrist near the iPhone, then run:"
+  echo "      ./tool/install_ios_with_watch.sh $DEVICE_NAME"
+  echo ""
+  echo "    Or on iPhone: Watch app → General → scroll to South Texas Golf Tracker"
+  echo "    → turn ON \"Show App on Apple Watch\"."
 fi
 
 xcrun devicectl device process launch --device "$CORE_DEVICE_ID" com.golfmapapp.golfMapFlutter 2>/dev/null || true
 
 echo ""
 echo "Done. South Texas Golf Tracker should now be on your iPhone."
-if [[ -n "$WATCH_CORE_DEVICE_ID" ]]; then
+if [[ -n "${WATCH_CORE_DEVICE_ID:-}" ]]; then
   echo "Watch app installed directly — open South Texas Golf Tracker on your watch."
 else
-  echo "1. On iPhone: Watch app → confirm South Texas Golf Tracker is on your watch."
+  echo "Watch app was NOT installed automatically."
+  echo "1. Unlock Apple Watch and keep it near your iPhone."
+  echo "2. Re-run: ./tool/install_ios_with_watch.sh $DEVICE_NAME"
+  echo "3. Or on iPhone: Watch app → find South Texas Golf Tracker → enable Show App on Apple Watch."
 fi
-echo "2. Delete any older golf watch app if you still see the old UI."

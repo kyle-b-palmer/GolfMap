@@ -22,6 +22,10 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>South Texas Golf Tracker uses your location on Apple Watch to show distance to the green.</string>
+	<key>WKBackgroundModes</key>
+	<array>
+		<string>physical-therapy</string>
+	</array>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>

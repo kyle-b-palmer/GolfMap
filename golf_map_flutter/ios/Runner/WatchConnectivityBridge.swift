@@ -21,8 +21,7 @@ final class WatchConnectivityBridge: NSObject, WCSessionDelegate {
         let session = WCSession.default
         guard session.activationState == .activated else { return }
         guard let state = GolfRoundLiveActivityController.shared.loadState(),
-              !state.holes.isEmpty,
-              !state.courseName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+              state.isActiveRound else {
             return
         }
 
@@ -65,12 +64,58 @@ final class WatchConnectivityBridge: NSObject, WCSessionDelegate {
         }
 
         if let current = GolfRoundLiveActivityController.shared.loadState() {
-            guard incoming.revision > current.revision else { return }
+            let hasPins = !incoming.pendingGpsPins.isEmpty
+            let hasUndos = !incoming.pendingGpsPinUndos.isEmpty
+            let hasScoreChanges =
+                incoming.scores != current.scores || incoming.putts != current.putts
+            let hasHoleChange = incoming.selectedHole != current.selectedHole
+            let revisionAhead = incoming.revision > current.revision
+
+            guard revisionAhead || hasPins || hasUndos || hasScoreChanges || hasHoleChange else {
+                return
+            }
+
             var updated = current
             updated.scores = incoming.scores
             updated.putts = incoming.putts
             updated.selectedHole = incoming.selectedHole
-            updated.revision = incoming.revision
+            updated.revision = revisionAhead ? incoming.revision : current.revision + 1
+
+            if hasPins {
+                for pin in incoming.pendingGpsPins {
+                    updated.pendingGpsPinUndos.removeAll { undo in
+                        undo.hole == pin.hole &&
+                            yardsBetweenPin(undo, pin) < 25
+                    }
+
+                    let duplicate = updated.pendingGpsPins.contains {
+                        $0.hole == pin.hole &&
+                            $0.latitude == pin.latitude &&
+                            $0.longitude == pin.longitude
+                    }
+                    if !duplicate {
+                        updated.pendingGpsPins.append(pin)
+                    }
+                }
+            }
+            if hasUndos {
+                for pin in incoming.pendingGpsPinUndos {
+                    let superseded = incoming.pendingGpsPins.contains { added in
+                        added.hole == pin.hole &&
+                            yardsBetweenPin(added, pin) < 25
+                    }
+                    if superseded { continue }
+
+                    let duplicate = updated.pendingGpsPinUndos.contains {
+                        $0.hole == pin.hole &&
+                            $0.latitude == pin.latitude &&
+                            $0.longitude == pin.longitude
+                    }
+                    if !duplicate {
+                        updated.pendingGpsPinUndos.append(pin)
+                    }
+                }
+            }
             GolfRoundLiveActivityController.shared.saveState(updated)
             publishWatchMerge(updated)
             return
@@ -82,12 +127,12 @@ final class WatchConnectivityBridge: NSObject, WCSessionDelegate {
     }
 
     private func publishWatchMerge(_ state: GolfRoundSharedState) {
+        LiveActivityBridge.notifyWatchStateChanged()
         if #available(iOS 16.1, *) {
             Task { @MainActor in
                 await GolfRoundLiveActivityController.shared.pushDisplayUpdate(from: state)
             }
         }
-        LiveActivityBridge.notifyForeground()
     }
 
     func session(
@@ -119,6 +164,16 @@ final class WatchConnectivityBridge: NSObject, WCSessionDelegate {
         didReceiveMessage message: [String: Any],
         replyHandler: @escaping ([String: Any]) -> Void
     ) {
+        if message["type"] as? String == "requestRoundState" {
+            if let state = GolfRoundLiveActivityController.shared.loadState(),
+               state.isActiveRound {
+                replyHandler(roundPayload(for: state))
+            } else {
+                replyHandler(["ok": false])
+            }
+            return
+        }
+
         applyWatchPayload(message)
         replyHandler(["ok": true])
     }

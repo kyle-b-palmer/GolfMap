@@ -34,11 +34,14 @@ class GolfMapView extends StatefulWidget {
     required this.onLockedMeasurementDragEnd,
     required this.onSelectMeasurementPin,
     required this.onDeselectMeasurementPin,
+    required this.onSelectPinnedShot,
+    required this.onDeselectPinnedShot,
     required this.onSelectTee,
     required this.onMapReady,
     this.pinnedShots = const [],
     this.lockedMeasurementPoints = const [],
     this.selectedMeasurementPinIndex,
+    this.selectedPinnedShotIndex,
     this.greenYardages,
     this.bunkerDistances = const [],
     this.showGreenYardageCallout = false,
@@ -61,11 +64,14 @@ class GolfMapView extends StatefulWidget {
   final void Function(int index, LatLng point) onLockedMeasurementDragEnd;
   final void Function(int index) onSelectMeasurementPin;
   final VoidCallback onDeselectMeasurementPin;
+  final void Function(int index) onSelectPinnedShot;
+  final VoidCallback onDeselectPinnedShot;
   final void Function(dynamic featureId) onSelectTee;
   final VoidCallback onMapReady;
   final List<PinnedShot> pinnedShots;
   final List<MeasurementChainPoint> lockedMeasurementPoints;
   final int? selectedMeasurementPinIndex;
+  final int? selectedPinnedShotIndex;
   final GreenYardages? greenYardages;
   final List<BunkerDistance> bunkerDistances;
   final bool showGreenYardageCallout;
@@ -85,6 +91,7 @@ class _GolfMapViewState extends State<GolfMapView> {
 
   static const _lockedHitTarget = 30.0;
   static const _lockedPinHitPixels = 30.0;
+  static const _pinnedShotHitPixels = 34.0;
   static const _dragNotifyInterval = Duration(milliseconds: 50);
 
   bool get _isDragging => _draggingLockedIndex != null;
@@ -202,7 +209,9 @@ class _GolfMapViewState extends State<GolfMapView> {
   }
 
   bool get _pinInteractionActive =>
-      _isDragging || widget.selectedMeasurementPinIndex != null;
+      _isDragging ||
+      widget.selectedMeasurementPinIndex != null ||
+      widget.selectedPinnedShotIndex != null;
 
   void _beginLockedPinDrag(int index) {
     if (widget.selectedMeasurementPinIndex != index) {
@@ -389,6 +398,12 @@ class _GolfMapViewState extends State<GolfMapView> {
         onTap: (_, point) {
           if (_isDragging) return;
 
+          final pinnedIndex = _pinnedShotIndexNearTap(point);
+          if (pinnedIndex != null) {
+            widget.onSelectPinnedShot(pinnedIndex);
+            return;
+          }
+
           final pinIndex = _lockedPinIndexNearTap(point);
           if (pinIndex != null) {
             widget.onSelectMeasurementPin(pinIndex);
@@ -401,6 +416,11 @@ class _GolfMapViewState extends State<GolfMapView> {
             widget.selectedCourse,
             widget.selectedHole,
           );
+
+          if (widget.selectedPinnedShotIndex != null && !insideHole) {
+            widget.onDeselectPinnedShot();
+            return;
+          }
 
           if (widget.selectedMeasurementPinIndex != null && !insideHole) {
             widget.onDeselectMeasurementPin();
@@ -496,6 +516,31 @@ class _GolfMapViewState extends State<GolfMapView> {
     return closestIndex;
   }
 
+  int? _pinnedShotIndexNearTap(LatLng tap) {
+    if (widget.pinnedShots.isEmpty) return null;
+
+    final sorted = [...widget.pinnedShots]
+      ..sort((a, b) => a.shotNumber.compareTo(b.shotNumber));
+    final camera = widget.mapController.camera;
+    final tapScreen = camera.latLngToScreenOffset(tap);
+
+    int? closestIndex;
+    var closestDist = _pinnedShotHitPixels;
+
+    for (var i = 0; i < sorted.length; i++) {
+      final pinScreen = camera.latLngToScreenOffset(
+        LatLng(sorted[i].latitude, sorted[i].longitude),
+      );
+      final dist = (tapScreen - pinScreen).distance;
+      if (dist < closestDist) {
+        closestDist = dist;
+        closestIndex = i;
+      }
+    }
+
+    return closestIndex;
+  }
+
   LatLng? _screenOffsetToLatLng(Offset screen) {
     try {
       return widget.mapController.camera.screenOffsetToLatLng(screen);
@@ -580,12 +625,49 @@ class _GolfMapViewState extends State<GolfMapView> {
       markers.add(
         Marker(
           point: to,
-          width: 26,
-          height: 26,
+          width: 40,
+          height: 40,
           alignment: Alignment.center,
-          child: _PinnedShotMarker(shotNumber: shot.shotNumber),
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () => widget.onSelectPinnedShot(i),
+            child: _PinnedShotMarker(
+              shotNumber: shot.shotNumber,
+              isSelected: widget.selectedPinnedShotIndex == i,
+            ),
+          ),
         ),
       );
+    }
+
+    if (widget.userCoord != null && sorted.isNotEmpty) {
+      final lastPin = sorted.last;
+      final pinPoint = LatLng(lastPin.latitude, lastPin.longitude);
+      final userPoint = widget.userCoord!;
+      final distToPin = metersToYards(distanceMeters(pinPoint, userPoint));
+
+      if (distToPin >= 3) {
+        _addSegmentLine(lines, pinPoint, userPoint, dashed: true);
+        final mid = LatLng(
+          (pinPoint.latitude + userPoint.latitude) / 2,
+          (pinPoint.longitude + userPoint.longitude) / 2,
+        );
+        markers.add(
+          Marker(
+            point: mid,
+            width: 96,
+            height: 28,
+            alignment: Alignment.center,
+            child: Center(
+              child: _ShotDistanceLabel(
+                yards: distToPin,
+                borderColor: const Color(0xFF81D4FA),
+                textColor: const Color(0xFFE1F5FE),
+              ),
+            ),
+          ),
+        );
+      }
     }
 
     return [
@@ -1130,24 +1212,34 @@ class _TeeDisc extends StatelessWidget {
 }
 
 class _PinnedShotMarker extends StatelessWidget {
-  const _PinnedShotMarker({required this.shotNumber});
+  const _PinnedShotMarker({
+    required this.shotNumber,
+    this.isSelected = false,
+  });
 
   final int shotNumber;
+  final bool isSelected;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 22,
-      height: 22,
+      width: isSelected ? 26 : 22,
+      height: isSelected ? 26 : 22,
       decoration: BoxDecoration(
         color: const Color(0xFFFF9800),
         shape: BoxShape.circle,
-        border: Border.all(color: Colors.white, width: 2),
-        boxShadow: const [
+        border: Border.all(
+          color: isSelected ? const Color(0xFFFFD54F) : Colors.white,
+          width: isSelected ? 2.5 : 2,
+        ),
+        boxShadow: [
           BoxShadow(
-            color: Color(0x66000000),
-            blurRadius: 4,
-            offset: Offset(0, 1),
+            color: isSelected
+                ? const Color(0x99FFD54F)
+                : const Color(0x66000000),
+            blurRadius: isSelected ? 5 : 4,
+            spreadRadius: isSelected ? 1 : 0,
+            offset: const Offset(0, 1),
           ),
         ],
       ),

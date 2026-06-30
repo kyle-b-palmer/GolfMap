@@ -11,6 +11,8 @@ final class WatchLocationManager: NSObject, ObservableObject, CLLocationManagerD
     private let manager = CLLocationManager()
     private var greenLatitude = 0.0
     private var greenLongitude = 0.0
+    private var freshLocationContinuation: CheckedContinuation<CLLocation?, Never>?
+    private var freshLocationTimeoutTask: Task<Void, Never>?
 
     private override init() {
         super.init()
@@ -42,6 +44,56 @@ final class WatchLocationManager: NSObject, ObservableObject, CLLocationManagerD
 
     func stopUpdates() {
         manager.stopUpdatingLocation()
+        cancelFreshLocationRequest(returning: nil)
+    }
+
+    /// Requests a new GPS fix instead of returning a stale coordinate.
+    func requestFreshLocation(timeoutSeconds: TimeInterval = 8) async -> CLLocation? {
+        let status = manager.authorizationStatus
+        if status == .denied || status == .restricted {
+            return manager.location
+        }
+        if status == .notDetermined {
+            manager.requestWhenInUseAuthorization()
+            try? await Task.sleep(nanoseconds: 400_000_000)
+        }
+
+        if let cached = manager.location,
+           abs(cached.timestamp.timeIntervalSinceNow) < 8,
+           cached.horizontalAccuracy >= 0,
+           cached.horizontalAccuracy <= 40 {
+            return cached
+        }
+
+        cancelFreshLocationRequest(returning: nil)
+
+        return await withCheckedContinuation { continuation in
+            freshLocationContinuation = continuation
+            manager.requestLocation()
+
+            freshLocationTimeoutTask?.cancel()
+            freshLocationTimeoutTask = Task {
+                try? await Task.sleep(
+                    nanoseconds: UInt64(timeoutSeconds * 1_000_000_000)
+                )
+                await MainActor.run {
+                    if let cached = self.manager.location,
+                       cached.horizontalAccuracy >= 0 {
+                        self.cancelFreshLocationRequest(returning: cached)
+                    } else {
+                        self.cancelFreshLocationRequest(returning: nil)
+                    }
+                }
+            }
+        }
+    }
+
+    private func cancelFreshLocationRequest(returning location: CLLocation?) {
+        freshLocationTimeoutTask?.cancel()
+        freshLocationTimeoutTask = nil
+        guard let continuation = freshLocationContinuation else { return }
+        freshLocationContinuation = nil
+        continuation.resume(returning: location)
     }
 
     nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
@@ -60,6 +112,10 @@ final class WatchLocationManager: NSObject, ObservableObject, CLLocationManagerD
     ) {
         guard let location = locations.last else { return }
         Task { @MainActor in
+            if freshLocationContinuation != nil {
+                cancelFreshLocationRequest(returning: location)
+            }
+
             guard greenLatitude != 0, greenLongitude != 0 else { return }
             let yards = yardsBetween(
                 location.coordinate,
@@ -75,7 +131,11 @@ final class WatchLocationManager: NSObject, ObservableObject, CLLocationManagerD
         _ manager: CLLocationManager,
         didFailWithError error: Error
     ) {
-        // Keep last known yardage.
+        Task { @MainActor in
+            if freshLocationContinuation != nil {
+                cancelFreshLocationRequest(returning: manager.location)
+            }
+        }
     }
 }
 

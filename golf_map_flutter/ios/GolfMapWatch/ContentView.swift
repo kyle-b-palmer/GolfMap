@@ -41,36 +41,48 @@ struct ContentView: View {
     }
 
     private func roundView(_ state: GolfRoundSharedState) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(state.courseName)
-                .font(.caption2.weight(.semibold))
-                .lineLimit(1)
-                .minimumScaleFactor(0.55)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.top, 6)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(state.courseName)
+                    .font(.caption2.weight(.semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.55)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, 6)
 
-            HStack(alignment: .firstTextBaseline) {
-                Text("HOLE \(state.selectedHole)")
-                    .font(.headline.bold())
-                Spacer(minLength: 4)
-                totalLabel(state)
+                HStack(alignment: .firstTextBaseline) {
+                    Text("HOLE \(state.selectedHole)")
+                        .font(.headline.bold())
+                    Spacer(minLength: 4)
+                    totalLabel(state)
+                }
+
+                yardageAndStatsRow(state)
+
+                HStack(spacing: 6) {
+                    scoreTapBlock(state)
+                    puttsTapBlock(state)
+                }
+
+                if viewModel.canUndoLastSwing {
+                    Button {
+                        viewModel.undoLastSwing()
+                    } label: {
+                        Label("Undo last swing", systemImage: "arrow.uturn.backward")
+                            .font(.caption2.weight(.semibold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 6)
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.orange)
+                }
             }
-
-            yardageAndStatsRow(state)
-
-            Spacer(minLength: 10)
-
-            HStack(spacing: 6) {
-                scoreTapBlock(state)
-                puttsTapBlock(state)
-            }
-
-            Spacer(minLength: 0)
+            .padding(.horizontal, 8)
+            .padding(.bottom, 8)
         }
-        .padding(.horizontal, 8)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .contentShape(Rectangle())
-        .gesture(holeSwipeGesture)
+        .simultaneousGesture(holeSwipeGesture)
         .sheet(isPresented: $showingScorePicker) {
             scorePickerSheet
         }
@@ -92,34 +104,63 @@ struct ContentView: View {
     }
 
     private func yardageAndStatsRow(_ state: GolfRoundSharedState) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            if let yards = viewModel.yardsToGreen, yards >= 0 {
-                Text("\(yards) YDS")
-                    .font(.system(size: 22, weight: .bold, design: .rounded))
-                    .foregroundStyle(accentGreen)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-            } else {
-                Text("— YDS")
-                    .font(.system(size: 20, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.secondary)
+        HStack(alignment: .center, spacing: 8) {
+            VStack(alignment: .leading, spacing: 4) {
+                if let yards = viewModel.yardsToGreen, yards >= 0 {
+                    Text("\(yards) YDS")
+                        .font(.system(size: 22, weight: .bold, design: .rounded))
+                        .foregroundStyle(accentGreen)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                } else {
+                    Text("— YDS")
+                        .font(.system(size: 20, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.secondary)
+                }
+
+                HStack(spacing: 12) {
+                    Text("PAR \(state.currentPar > 0 ? "\(state.currentPar)" : "—")")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.primary)
+
+                    Text("HCP \(state.currentHandicap > 0 ? "\(state.currentHandicap)" : "—")")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
             }
 
-            HStack(spacing: 12) {
-                Text("PAR \(state.currentPar > 0 ? "\(state.currentPar)" : "—")")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.primary)
+            Spacer(minLength: 0)
 
-                Text("HCP \(state.currentHandicap > 0 ? "\(state.currentHandicap)" : "—")")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-            }
+            pinButton
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.white.opacity(0.08))
         .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+
+    private var pinButton: some View {
+        Button {
+            viewModel.pinCurrentLocation()
+        } label: {
+            VStack(spacing: 2) {
+                if viewModel.isPinningLocation {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Image(systemName: "mappin.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(accentGreen)
+                }
+                Text("PIN")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.secondary)
+            }
+            .frame(width: 44)
+        }
+        .buttonStyle(.plain)
+        .disabled(viewModel.isPinningLocation)
     }
 
     private func totalLabel(_ state: GolfRoundSharedState) -> some View {

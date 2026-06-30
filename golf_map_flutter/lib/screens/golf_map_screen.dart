@@ -89,11 +89,13 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
   LatLng? _shotOrigin;
   final List<MeasurementChainPoint> _lockedMeasurementPoints = [];
   int? _selectedMeasurementPinIndex;
+  int? _selectedPinnedShotIndex;
   DistanceInfo? _distanceInfo;
   dynamic _selectedTeeFeatureId;
   String? _preferredTeeLabel;
   StreamSubscription<Position>? _positionSub;
   Timer? _liveActivityGpsTimer;
+  Timer? _liveActivityGpsSlowTimer;
   bool _promptedAlwaysLocation = false;
   bool _liveActivityReady = false;
   bool _liveActivityBootstrapped = false;
@@ -102,7 +104,7 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
   bool _appIsResumed = true;
   String? _pendingFocusHole;
   DateTime? _lastForegroundSyncAt;
-  StreamSubscription<void>? _foregroundSub;
+  StreamSubscription<String>? _stateChangeSub;
   int _mapVisualEpoch = 0;
 
   List<GolfFeature> get _currentHoleFeatures {
@@ -160,7 +162,11 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
     _loadPreferences();
     _initLocation();
     unawaited(_bootstrapLiveActivity());
-    _foregroundSub = _liveActivity.foregroundStream.listen((_) {
+    _stateChangeSub = _liveActivity.stateChangeStream.listen((event) {
+      if (event == 'watchState') {
+        unawaited(_pullWidgetRoundChanges());
+        return;
+      }
       unawaited(_handleAppReturnToForeground());
     });
   }
@@ -253,7 +259,7 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
     if (!Platform.isIOS || _liveActivityGpsTimerStarted) return;
     _liveActivityGpsTimerStarted = true;
     _liveActivityGpsTimer?.cancel();
-    _liveActivityGpsTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+    _liveActivityGpsTimer = Timer.periodic(const Duration(milliseconds: 300), (_) {
       if (!mounted ||
           _loading ||
           _selectedCourse == null ||
@@ -261,7 +267,20 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
         return;
       }
       unawaited(_pullWidgetRoundChanges());
+    });
+    _liveActivityGpsSlowTimer?.cancel();
+    _liveActivityGpsSlowTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted ||
+          _loading ||
+          _selectedCourse == null ||
+          !_liveActivityReady) {
+        return;
+      }
       unawaited(_syncLiveActivityGps(force: true));
+      unawaited(() async {
+        await _pullWidgetRoundChanges();
+        await _liveActivity.pushWatchRoundState();
+      }());
     });
   }
 
@@ -317,9 +336,10 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _foregroundSub?.cancel();
+    _stateChangeSub?.cancel();
     _liveActivityReady = false;
     _liveActivityGpsTimer?.cancel();
+    _liveActivityGpsSlowTimer?.cancel();
     _positionSub?.cancel();
     unawaited(_liveActivity.end());
     super.dispose();
@@ -387,19 +407,6 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
     if (changes == null || !mounted) return;
     if (changes.courseName != course) return;
 
-    if (changes.pendingGpsPins.isNotEmpty) {
-      for (final pin in changes.pendingGpsPins) {
-        if (!_holes.contains(pin.hole)) continue;
-        _addPinnedShot(
-          LatLng(pin.latitude, pin.longitude),
-          'GPS',
-          hole: pin.hole,
-          showSnackBar: pin.hole == _selectedHole,
-        );
-      }
-      await _liveActivity.acknowledgePendingGpsPins();
-    }
-
     final holeChanged = changes.selectedHole != _selectedHole;
 
     setState(() {
@@ -410,6 +417,56 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
         _putts[_scoreKey(course, entry.key)] = entry.value;
       }
     });
+
+    final undosToApply = changes.pendingGpsPinUndos.where((undo) {
+      if (!_holes.contains(undo.hole)) return false;
+      for (final pin in changes.pendingGpsPins) {
+        if (pin.hole != undo.hole) continue;
+        if (metersToYards(
+              distanceMeters(
+                LatLng(pin.latitude, pin.longitude),
+                LatLng(undo.latitude, undo.longitude),
+              ),
+            ) <
+            25) {
+          return false;
+        }
+      }
+      return true;
+    }).toList();
+
+    if (undosToApply.isNotEmpty) {
+      for (final pin in undosToApply) {
+        _undoPinnedShot(
+          pin,
+          showSnackBar: pin.hole == _selectedHole,
+        );
+      }
+    }
+
+    if (changes.pendingGpsPins.isNotEmpty) {
+      for (final pin in changes.pendingGpsPins) {
+        if (!_holes.contains(pin.hole)) continue;
+        _addPinnedShot(
+          LatLng(pin.latitude, pin.longitude),
+          'watch',
+          hole: pin.hole,
+          showSnackBar: pin.hole == _selectedHole,
+        );
+      }
+    }
+
+    if (changes.pendingGpsPins.isNotEmpty ||
+        undosToApply.isNotEmpty) {
+      await _liveActivity.acknowledgePendingGpsPins();
+      if (mounted) {
+        setState(() => _mapVisualEpoch++);
+      }
+    } else if (undosToApply.isEmpty &&
+        changes.pendingGpsPinUndos.isNotEmpty) {
+      // Scores already applied above; clear stale undos that did not match a pin.
+      await _liveActivity.clearPendingGpsPinUndos();
+    }
 
     if (holeChanged) {
       if (!_holes.contains(changes.selectedHole) && _holes.isNotEmpty) {
@@ -422,7 +479,7 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
       return;
     }
 
-    await _liveActivity.syncInteractiveRoundState(
+    unawaited(_liveActivity.syncInteractiveRoundState(
       holes: _holes,
       selectedHole: _selectedHole,
       scores: {
@@ -458,7 +515,8 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
             .toList(),
       )?.longitude,
       revision: changes.revision,
-    );
+    ));
+    unawaited(_liveActivity.pushWatchRoundState());
   }
 
   Future<void> _syncLiveActivityGps({bool force = false}) async {
@@ -992,6 +1050,7 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
   void _selectMeasurementPin(int index) {
     if (index < 0 || index >= _lockedMeasurementPoints.length) return;
     setState(() {
+      _selectedPinnedShotIndex = null;
       _selectedMeasurementPinIndex =
           _selectedMeasurementPinIndex == index ? null : index;
     });
@@ -1000,6 +1059,104 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
   void _deselectMeasurementPin() {
     if (_selectedMeasurementPinIndex == null) return;
     setState(() => _selectedMeasurementPinIndex = null);
+  }
+
+  void _selectPinnedShot(int index) {
+    final pins = _sortedPinnedShotsForHole(_selectedHole);
+    if (index < 0 || index >= pins.length) return;
+    setState(() {
+      _selectedMeasurementPinIndex = null;
+      _selectedPinnedShotIndex =
+          _selectedPinnedShotIndex == index ? null : index;
+    });
+  }
+
+  void _deselectPinnedShot() {
+    if (_selectedPinnedShotIndex == null) return;
+    setState(() => _selectedPinnedShotIndex = null);
+  }
+
+  List<PinnedShot> _sortedPinnedShotsForHole(String hole) {
+    final pins = List<PinnedShot>.from(_pinnedShots[hole] ?? const []);
+    pins.sort((a, b) => a.shotNumber.compareTo(b.shotNumber));
+    return pins;
+  }
+
+  void _deletePinnedShot(int index) {
+    final pins = _sortedPinnedShotsForHole(_selectedHole);
+    if (index < 0 || index >= pins.length) return;
+
+    final removed = pins[index];
+    final course = _selectedCourse;
+    pins.removeAt(index);
+
+    final renumbered = <PinnedShot>[];
+    for (var i = 0; i < pins.length; i++) {
+      final shot = pins[i];
+      renumbered.add(
+        PinnedShot(
+          shotNumber: i + 1,
+          latitude: shot.latitude,
+          longitude: shot.longitude,
+          fromLatitude: shot.fromLatitude,
+          fromLongitude: shot.fromLongitude,
+          teeLabel: shot.teeLabel,
+          shotYards: shot.shotYards,
+          yardsToPin: shot.yardsToPin,
+        ),
+      );
+    }
+
+    final scoreKey = course != null
+        ? _scoreKey(course, _selectedHole)
+        : null;
+    final updatedScores = <String, int>{
+      if (course != null)
+        for (final hole in _holes)
+          hole: _scores[_scoreKey(course, hole)] ?? 0,
+    };
+    if (scoreKey != null) {
+      final currentScore = _scores[scoreKey] ?? 0;
+      if (currentScore > 0) {
+        updatedScores[_selectedHole] = currentScore - 1;
+      }
+    }
+
+    setState(() {
+      _selectedPinnedShotIndex = null;
+      if (renumbered.isEmpty) {
+        _pinnedShots.remove(_selectedHole);
+      } else {
+        _pinnedShots[_selectedHole] = renumbered;
+      }
+      if (scoreKey != null && updatedScores.containsKey(_selectedHole)) {
+        _scores[scoreKey] = updatedScores[_selectedHole]!;
+      }
+    });
+
+    if (course != null && _liveActivityReady) {
+      unawaited(() async {
+        await _liveActivity.reportPinnedShotRemoved(
+          hole: _selectedHole,
+          latitude: removed.latitude,
+          longitude: removed.longitude,
+          scores: updatedScores,
+        );
+        await Future<void>.delayed(const Duration(seconds: 2));
+        await _liveActivity.clearPendingGpsPinUndos();
+      }());
+      _syncLiveActivity(force: true);
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Removed shot ${index + 1} on hole $_selectedHole')),
+    );
+  }
+
+  void _deleteSelectedPinnedShot() {
+    final index = _selectedPinnedShotIndex;
+    if (index == null) return;
+    _deletePinnedShot(index);
   }
 
   void _deleteMeasurementPin(int index) {
@@ -1254,8 +1411,22 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
     final holePins =
         List<PinnedShot>.from(_pinnedShots[targetHole] ?? const []);
     final shotNumber = holePins.length + 1;
+    final isWatchPin = source == 'watch';
 
-    if (holePins.isEmpty && teePoint == null) {
+    if (isWatchPin) {
+      const dedupRadiusYards = 25;
+      final candidate = point;
+      for (final existing in holePins) {
+        final existingPoint =
+            LatLng(existing.latitude, existing.longitude);
+        if (metersToYards(distanceMeters(existingPoint, candidate)) <
+            dedupRadiusYards) {
+          return;
+        }
+      }
+    }
+
+    if (holePins.isEmpty && teePoint == null && !isWatchPin) {
       if (showSnackBar && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Select a tee box for the first shot')),
@@ -1266,7 +1437,7 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
 
     final LatLng fromPoint;
     if (holePins.isEmpty) {
-      fromPoint = teePoint!;
+      fromPoint = teePoint ?? point;
     } else {
       final previous = holePins.last;
       fromPoint = LatLng(previous.latitude, previous.longitude);
@@ -1296,12 +1467,72 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
     });
 
     if (showSnackBar && mounted) {
-      final sourceLabel = source == 'GPS' ? 'GPS' : 'map';
+      final sourceLabel = switch (source) {
+        'GPS' => 'GPS',
+        'watch' => 'watch',
+        _ => 'map',
+      };
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
             'Shot $shotNumber pinned ($sourceLabel) on hole $targetHole — $shotYards yds',
           ),
+        ),
+      );
+    }
+  }
+
+  void _undoPinnedShot(
+    LiveActivityGpsPin pin, {
+    bool showSnackBar = true,
+  }) {
+    final holePins = List<PinnedShot>.from(_pinnedShots[pin.hole] ?? const []);
+    if (holePins.isEmpty) return;
+
+    const toleranceYards = 25;
+    var removeIndex = holePins.lastIndexWhere(
+      (shot) =>
+          metersToYards(
+            distanceMeters(
+              LatLng(shot.latitude, shot.longitude),
+              LatLng(pin.latitude, pin.longitude),
+            ),
+          ) <
+          toleranceYards,
+    );
+    if (removeIndex < 0) return;
+
+    holePins.removeAt(removeIndex);
+
+    final renumbered = <PinnedShot>[];
+    for (var i = 0; i < holePins.length; i++) {
+      final shot = holePins[i];
+      renumbered.add(
+        PinnedShot(
+          shotNumber: i + 1,
+          latitude: shot.latitude,
+          longitude: shot.longitude,
+          fromLatitude: shot.fromLatitude,
+          fromLongitude: shot.fromLongitude,
+          teeLabel: shot.teeLabel,
+          shotYards: shot.shotYards,
+          yardsToPin: shot.yardsToPin,
+        ),
+      );
+    }
+
+    setState(() {
+      if (renumbered.isEmpty) {
+        _pinnedShots.remove(pin.hole);
+      } else {
+        _pinnedShots[pin.hole] = renumbered;
+      }
+    });
+
+    if (showSnackBar && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Undid last swing pin on hole ${pin.hole}'),
         ),
       );
     }
@@ -1341,6 +1572,10 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
 
   void _selectHole(String hole) {
     _clearDistance();
+    setState(() {
+      _selectedPinnedShotIndex = null;
+      _selectedMeasurementPinIndex = null;
+    });
     _liveActivity.resetGpsThrottle();
     _refreshHoleState(holeOverride: hole);
   }
@@ -1652,7 +1887,10 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
             onLockedMeasurementDragEnd: _handleLockedMeasurementDragEnd,
             onSelectMeasurementPin: _selectMeasurementPin,
             onDeselectMeasurementPin: _deselectMeasurementPin,
+            onSelectPinnedShot: _selectPinnedShot,
+            onDeselectPinnedShot: _deselectPinnedShot,
             selectedMeasurementPinIndex: _selectedMeasurementPinIndex,
+            selectedPinnedShotIndex: _selectedPinnedShotIndex,
             onSelectTee: _selectTee,
             onMapReady: () {
               setState(() => _mapReady = true);
@@ -1768,7 +2006,12 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
                   onOpenDetails: _openDistanceDetails,
                   onOpenGpsToGreen: _openGpsToGreen,
                 ),
-                if (_selectedMeasurementPinIndex != null) ...[
+                if (_selectedPinnedShotIndex != null) ...[
+                  const SizedBox(height: 8),
+                  _DeleteNodeButton(
+                    onTap: _deleteSelectedPinnedShot,
+                  ),
+                ] else if (_selectedMeasurementPinIndex != null) ...[
                   const SizedBox(height: 8),
                   _DeleteNodeButton(
                     onTap: () =>

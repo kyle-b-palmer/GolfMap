@@ -22,6 +22,10 @@ final class LiveActivityBridge: NSObject, FlutterPlugin, FlutterStreamHandler {
         foregroundSink?("foreground")
     }
 
+    static func notifyWatchStateChanged() {
+        foregroundSink?("watchState")
+    }
+
     func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
         LiveActivityBridge.foregroundSink = events
         return nil
@@ -108,9 +112,39 @@ final class LiveActivityBridge: NSObject, FlutterPlugin, FlutterStreamHandler {
                         "longitude": pin.longitude,
                     ]
                 },
+                "pendingGpsPinUndos": state.pendingGpsPinUndos.map { pin in
+                    [
+                        "hole": pin.hole,
+                        "latitude": pin.latitude,
+                        "longitude": pin.longitude,
+                    ]
+                },
             ])
         case "acknowledgePendingGpsPins":
             GolfRoundLiveActivityController.shared.clearPendingGpsPins()
+            result(nil)
+        case "clearPendingGpsPinUndos":
+            GolfRoundLiveActivityController.shared.clearPendingGpsPinUndos()
+            result(nil)
+        case "reportPinnedShotRemoved":
+            guard let args = call.arguments as? [String: Any],
+                  let hole = args["hole"] as? String,
+                  let latitude = args["latitude"] as? Double,
+                  let longitude = args["longitude"] as? Double else {
+                result(FlutterError(code: "bad_args", message: "Invalid pin removal", details: nil))
+                return
+            }
+            let scores = intMap(from: args["scores"])
+            GolfRoundLiveActivityController.shared.reportPinnedShotRemoved(
+                hole: hole,
+                latitude: latitude,
+                longitude: longitude,
+                scores: scores
+            )
+            WatchConnectivityBridge.shared.pushRoundStateIfNeeded()
+            result(nil)
+        case "pushWatchRoundState":
+            WatchConnectivityBridge.shared.pushRoundStateIfNeeded()
             result(nil)
         case "getSharedRevision":
             result(GolfRoundLiveActivityController.shared.loadState()?.revision ?? 0)

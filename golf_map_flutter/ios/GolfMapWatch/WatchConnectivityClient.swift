@@ -11,6 +11,8 @@ final class WatchConnectivityClient: NSObject, ObservableObject, WCSessionDelega
 
     @Published private(set) var phoneReachable = false
 
+    private var lastPhoneSyncRequest: Date?
+
     private override init() {
         super.init()
     }
@@ -33,13 +35,48 @@ final class WatchConnectivityClient: NSObject, ObservableObject, WCSessionDelega
             "state": state.dictionaryPayload(),
         ]
 
+        try? session.updateApplicationContext(payload)
+
         if session.isReachable {
-            session.sendMessage(payload, replyHandler: nil) { _ in
-                session.transferUserInfo(payload)
-            }
+            session.sendMessage(
+                payload,
+                replyHandler: nil,
+                errorHandler: { _ in
+                    session.transferUserInfo(payload)
+                }
+            )
         } else {
             session.transferUserInfo(payload)
         }
+    }
+
+    func requestPhoneRoundStateIfNeeded(minimumInterval: TimeInterval = 3) {
+        guard WCSession.isSupported() else { return }
+        let session = WCSession.default
+        guard session.activationState == .activated, session.isReachable else { return }
+
+        let now = Date()
+        if let lastPhoneSyncRequest,
+           now.timeIntervalSince(lastPhoneSyncRequest) < minimumInterval {
+            return
+        }
+        lastPhoneSyncRequest = now
+
+        session.sendMessage(
+            ["type": "requestRoundState"],
+            replyHandler: { [weak self] reply in
+                Task { @MainActor in
+                    self?.applyIncomingPayload(reply)
+                }
+            },
+            errorHandler: nil
+        )
+    }
+
+    private func applyIncomingPayload(_ payload: [String: Any]) {
+        guard let state = decodeState(from: payload) else { return }
+        GolfRoundWatchStore.shared.mergePhoneState(state)
+        NotificationCenter.default.post(name: .golfRoundWatchStateDidChange, object: nil)
     }
 
     nonisolated func session(
@@ -49,9 +86,11 @@ final class WatchConnectivityClient: NSObject, ObservableObject, WCSessionDelega
     ) {
         Task { @MainActor in
             phoneReachable = session.isReachable
-            if let state = decodeState(from: session.receivedApplicationContext) {
-                GolfRoundWatchStore.shared.applyPhoneState(state)
+            if GolfRoundWatchStore.shared.reconcileFromPhoneContext() {
                 NotificationCenter.default.post(name: .golfRoundWatchStateDidChange, object: nil)
+            }
+            if session.isReachable {
+                requestPhoneRoundStateIfNeeded(minimumInterval: 0)
             }
         }
     }
@@ -59,6 +98,12 @@ final class WatchConnectivityClient: NSObject, ObservableObject, WCSessionDelega
     nonisolated func sessionReachabilityDidChange(_ session: WCSession) {
         Task { @MainActor in
             phoneReachable = session.isReachable
+            if session.isReachable {
+                if GolfRoundWatchStore.shared.reconcileFromPhoneContext() {
+                    NotificationCenter.default.post(name: .golfRoundWatchStateDidChange, object: nil)
+                }
+                requestPhoneRoundStateIfNeeded(minimumInterval: 0)
+            }
         }
     }
 
@@ -66,10 +111,8 @@ final class WatchConnectivityClient: NSObject, ObservableObject, WCSessionDelega
         _ session: WCSession,
         didReceiveApplicationContext applicationContext: [String: Any]
     ) {
-        guard let state = decodeState(from: applicationContext) else { return }
         Task { @MainActor in
-            GolfRoundWatchStore.shared.applyPhoneState(state)
-            NotificationCenter.default.post(name: .golfRoundWatchStateDidChange, object: nil)
+            applyIncomingPayload(applicationContext)
         }
     }
 
@@ -77,10 +120,8 @@ final class WatchConnectivityClient: NSObject, ObservableObject, WCSessionDelega
         _ session: WCSession,
         didReceiveUserInfo userInfo: [String: Any]
     ) {
-        guard let state = decodeState(from: userInfo) else { return }
         Task { @MainActor in
-            GolfRoundWatchStore.shared.applyPhoneState(state)
-            NotificationCenter.default.post(name: .golfRoundWatchStateDidChange, object: nil)
+            applyIncomingPayload(userInfo)
         }
     }
 
@@ -88,10 +129,8 @@ final class WatchConnectivityClient: NSObject, ObservableObject, WCSessionDelega
         _ session: WCSession,
         didReceiveMessage message: [String: Any]
     ) {
-        guard let state = decodeState(from: message) else { return }
         Task { @MainActor in
-            GolfRoundWatchStore.shared.applyPhoneState(state)
-            NotificationCenter.default.post(name: .golfRoundWatchStateDidChange, object: nil)
+            applyIncomingPayload(message)
         }
     }
 

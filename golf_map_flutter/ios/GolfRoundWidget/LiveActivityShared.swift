@@ -20,6 +20,7 @@ struct GolfRoundSharedState: Codable {
     var yardsToGreen: Int
     var revision: Int
     var pendingGpsPins: [GolfRoundGpsPin]
+    var pendingGpsPinUndos: [GolfRoundGpsPin]
     var greenLatitude: Double
     var greenLongitude: Double
     var gpsRefreshRevision: Int
@@ -39,6 +40,7 @@ struct GolfRoundSharedState: Codable {
         yardsToGreen: Int,
         revision: Int,
         pendingGpsPins: [GolfRoundGpsPin] = [],
+        pendingGpsPinUndos: [GolfRoundGpsPin] = [],
         greenLatitude: Double = 0,
         greenLongitude: Double = 0,
         gpsRefreshRevision: Int = 0
@@ -53,6 +55,7 @@ struct GolfRoundSharedState: Codable {
         self.yardsToGreen = yardsToGreen
         self.revision = revision
         self.pendingGpsPins = pendingGpsPins
+        self.pendingGpsPinUndos = pendingGpsPinUndos
         self.greenLatitude = greenLatitude
         self.greenLongitude = greenLongitude
         self.gpsRefreshRevision = gpsRefreshRevision
@@ -73,9 +76,17 @@ struct GolfRoundSharedState: Codable {
             [GolfRoundGpsPin].self,
             forKey: .pendingGpsPins
         ) ?? []
+        pendingGpsPinUndos = try container.decodeIfPresent(
+            [GolfRoundGpsPin].self,
+            forKey: .pendingGpsPinUndos
+        ) ?? []
         greenLatitude = try container.decodeIfPresent(Double.self, forKey: .greenLatitude) ?? 0
         greenLongitude = try container.decodeIfPresent(Double.self, forKey: .greenLongitude) ?? 0
         gpsRefreshRevision = try container.decodeIfPresent(Int.self, forKey: .gpsRefreshRevision) ?? 0
+    }
+
+    var isActiveRound: Bool {
+        !holes.isEmpty && !courseName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 }
 
@@ -131,6 +142,7 @@ final class GolfRoundLiveActivityController {
         greenLongitude: Double = 0
     ) {
         let pendingGpsPins = loadState()?.pendingGpsPins ?? []
+        let pendingGpsPinUndos = loadState()?.pendingGpsPinUndos ?? []
         let state = GolfRoundSharedState(
             holes: holes,
             selectedHole: selectedHole,
@@ -142,6 +154,7 @@ final class GolfRoundLiveActivityController {
             yardsToGreen: yardsToGreen,
             revision: revision,
             pendingGpsPins: pendingGpsPins,
+            pendingGpsPinUndos: pendingGpsPinUndos,
             greenLatitude: greenLatitude,
             greenLongitude: greenLongitude
         )
@@ -159,16 +172,57 @@ final class GolfRoundLiveActivityController {
     }
 
     func clearPendingGpsPins() {
-        guard var state = loadState(), !state.pendingGpsPins.isEmpty else { return }
+        guard var state = loadState() else { return }
+        guard !state.pendingGpsPins.isEmpty || !state.pendingGpsPinUndos.isEmpty else { return }
         state.pendingGpsPins = []
+        state.pendingGpsPinUndos = []
+        saveState(state)
+    }
+
+    func clearPendingGpsPinUndos() {
+        guard var state = loadState() else { return }
+        guard !state.pendingGpsPinUndos.isEmpty else { return }
+        state.pendingGpsPinUndos = []
+        saveState(state)
+    }
+
+    func reportPinnedShotRemoved(
+        hole: String,
+        latitude: Double,
+        longitude: Double,
+        scores: [String: Int]
+    ) {
+        guard var state = loadState() else { return }
+
+        let undo = GolfRoundGpsPin(
+            hole: hole,
+            latitude: latitude,
+            longitude: longitude
+        )
+
+        let duplicate = state.pendingGpsPinUndos.contains {
+            $0.hole == undo.hole &&
+                $0.latitude == undo.latitude &&
+                $0.longitude == undo.longitude
+        }
+        if !duplicate {
+            state.pendingGpsPinUndos.append(undo)
+        }
+
+        state.scores = scores
+        state.revision += 1
         saveState(state)
     }
 
     func consumeChanges(after revision: Int) -> GolfRoundSharedState? {
-        guard let state = loadState(), state.revision > revision else {
-            return nil
+        guard let state = loadState() else { return nil }
+        if state.revision > revision {
+            return state
         }
-        return state
+        if !state.pendingGpsPins.isEmpty || !state.pendingGpsPinUndos.isEmpty {
+            return state
+        }
+        return nil
     }
 
     @MainActor
@@ -373,6 +427,13 @@ private func yardsBetween(
     let start = CLLocation(latitude: from.latitude, longitude: from.longitude)
     let end = CLLocation(latitude: to.latitude, longitude: to.longitude)
     return Int((start.distance(from: end) * 1.09361).rounded())
+}
+
+func yardsBetweenPin(_ from: GolfRoundGpsPin, _ to: GolfRoundGpsPin) -> Int {
+    yardsBetween(
+        CLLocationCoordinate2D(latitude: from.latitude, longitude: from.longitude),
+        CLLocationCoordinate2D(latitude: to.latitude, longitude: to.longitude)
+    )
 }
 
 @MainActor

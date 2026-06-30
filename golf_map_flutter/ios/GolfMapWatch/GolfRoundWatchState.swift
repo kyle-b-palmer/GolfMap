@@ -1,4 +1,6 @@
+import CoreLocation
 import Foundation
+import WatchConnectivity
 
 struct GolfRoundGpsPin: Codable, Equatable {
     let hole: String
@@ -17,6 +19,7 @@ struct GolfRoundSharedState: Codable, Equatable {
     var yardsToGreen: Int
     var revision: Int
     var pendingGpsPins: [GolfRoundGpsPin]
+    var pendingGpsPinUndos: [GolfRoundGpsPin]
     var greenLatitude: Double
     var greenLongitude: Double
     var gpsRefreshRevision: Int
@@ -35,6 +38,7 @@ struct GolfRoundSharedState: Codable, Equatable {
         yardsToGreen: Int = -1,
         revision: Int = 0,
         pendingGpsPins: [GolfRoundGpsPin] = [],
+        pendingGpsPinUndos: [GolfRoundGpsPin] = [],
         greenLatitude: Double = 0,
         greenLongitude: Double = 0,
         gpsRefreshRevision: Int = 0
@@ -49,6 +53,7 @@ struct GolfRoundSharedState: Codable, Equatable {
         self.yardsToGreen = yardsToGreen
         self.revision = revision
         self.pendingGpsPins = pendingGpsPins
+        self.pendingGpsPinUndos = pendingGpsPinUndos
         self.greenLatitude = greenLatitude
         self.greenLongitude = greenLongitude
         self.gpsRefreshRevision = gpsRefreshRevision
@@ -68,6 +73,10 @@ struct GolfRoundSharedState: Codable, Equatable {
         pendingGpsPins = try container.decodeIfPresent(
             [GolfRoundGpsPin].self,
             forKey: .pendingGpsPins
+        ) ?? []
+        pendingGpsPinUndos = try container.decodeIfPresent(
+            [GolfRoundGpsPin].self,
+            forKey: .pendingGpsPinUndos
         ) ?? []
         greenLatitude = try container.decodeIfPresent(Double.self, forKey: .greenLatitude) ?? 0
         greenLongitude = try container.decodeIfPresent(Double.self, forKey: .greenLongitude) ?? 0
@@ -138,6 +147,8 @@ final class GolfRoundWatchStore {
     static let shared = GolfRoundWatchStore()
 
     private let defaults = UserDefaults.standard
+    private static let acceptedSwingsKey = "golf_round_accepted_swings"
+    private static let dedupRadiusYards = 25
 
     private init() {}
 
@@ -154,8 +165,115 @@ final class GolfRoundWatchStore {
     }
 
     func applyPhoneState(_ state: GolfRoundSharedState) {
-        guard state.isActiveRound else { return }
-        save(state)
+        mergePhoneState(state)
+    }
+
+    @discardableResult
+    func reconcileFromPhoneContext() -> Bool {
+        guard WCSession.isSupported() else { return false }
+        let session = WCSession.default
+        guard session.activationState == .activated else { return false }
+
+        guard let nested = session.receivedApplicationContext["state"] as? [String: Any],
+              let phone = GolfRoundSharedState.fromDictionary(nested),
+              phone.isActiveRound else {
+            return false
+        }
+
+        mergePhoneState(phone)
+        return true
+    }
+
+    func mergePhoneState(_ phone: GolfRoundSharedState) {
+        guard phone.isActiveRound else { return }
+
+        guard var local = load(), local.isActiveRound else {
+            save(phone)
+            return
+        }
+
+        let localPending = local.pendingGpsPins
+
+        if phone.revision > local.revision {
+            if !phone.pendingGpsPinUndos.isEmpty {
+                pruneAcceptedSwingPins(matching: phone.pendingGpsPinUndos)
+            }
+
+            var merged = phone
+            for hole in phone.holes {
+                let phoneScore = phone.scores[hole] ?? 0
+                let localScore = local.scores[hole] ?? 0
+                merged.scores[hole] = max(phoneScore, localScore)
+            }
+            merged.pendingGpsPins.removeAll { pin in
+                phone.pendingGpsPinUndos.contains { undo in
+                    pinsApproximatelyEqual(pin, undo)
+                }
+            }
+            if phone.pendingGpsPins.isEmpty {
+                merged.pendingGpsPins = []
+            } else {
+                for pin in localPending where !merged.pendingGpsPins.contains(pin) {
+                    let undone = phone.pendingGpsPinUndos.contains { undo in
+                        pinsApproximatelyEqual(pin, undo)
+                    }
+                    if !undone {
+                        merged.pendingGpsPins.append(pin)
+                    }
+                }
+            }
+            // Phone is authoritative; do not keep stale watch-only undo queues.
+            merged.pendingGpsPinUndos = []
+            save(merged)
+            return
+        }
+
+        var changed = false
+        if phone.gpsRefreshRevision > local.gpsRefreshRevision {
+            local.yardsToGreen = phone.yardsToGreen
+            local.gpsRefreshRevision = phone.gpsRefreshRevision
+            changed = true
+        }
+        if phone.greenLatitude != local.greenLatitude ||
+            phone.greenLongitude != local.greenLongitude {
+            local.greenLatitude = phone.greenLatitude
+            local.greenLongitude = phone.greenLongitude
+            changed = true
+        }
+
+        if phone.revision == local.revision {
+            if phone.scores != local.scores {
+                for hole in phone.holes {
+                    let phoneScore = phone.scores[hole] ?? 0
+                    let localScore = local.scores[hole] ?? 0
+                    local.scores[hole] = max(phoneScore, localScore)
+                }
+                changed = true
+            }
+            if phone.putts != local.putts {
+                local.putts = phone.putts
+                changed = true
+            }
+            if phone.selectedHole != local.selectedHole {
+                local.selectedHole = phone.selectedHole
+                changed = true
+            }
+        }
+
+        if changed {
+            save(local)
+        }
+    }
+
+    /// Pull the latest revision from the phone so watch edits are not rejected.
+    func syncRevisionFromPhone() {
+        _ = reconcileFromPhoneContext()
+    }
+
+    private func bumpRevision(_ state: inout GolfRoundSharedState) {
+        syncRevisionFromPhone()
+        let baseline = load()?.revision ?? state.revision
+        state.revision = baseline + 1
     }
 
     @discardableResult
@@ -164,7 +282,7 @@ final class GolfRoundWatchStore {
         let hole = state.selectedHole
         let current = state.scores[hole] ?? 0
         state.scores[hole] = max(0, min(99, current + delta))
-        state.revision += 1
+        bumpRevision(&state)
         save(state)
         return state
     }
@@ -174,7 +292,7 @@ final class GolfRoundWatchStore {
         guard var state = load(), state.isActiveRound else { return nil }
         let hole = state.selectedHole
         state.scores[hole] = max(0, min(99, score))
-        state.revision += 1
+        bumpRevision(&state)
         save(state)
         return state
     }
@@ -184,7 +302,7 @@ final class GolfRoundWatchStore {
         guard var state = load(), state.isActiveRound else { return nil }
         let hole = state.selectedHole
         state.putts[hole] = max(0, min(9, putts))
-        state.revision += 1
+        bumpRevision(&state)
         save(state)
         return state
     }
@@ -195,7 +313,7 @@ final class GolfRoundWatchStore {
         let index = state.holes.firstIndex(of: state.selectedHole) ?? -1
         let nextIndex = index < 0 ? 0 : (index + 1) % state.holes.count
         state.selectedHole = state.holes[nextIndex]
-        state.revision += 1
+        bumpRevision(&state)
         save(state)
         return state
     }
@@ -206,7 +324,7 @@ final class GolfRoundWatchStore {
         let index = state.holes.firstIndex(of: state.selectedHole) ?? 0
         let previousIndex = (index - 1 + state.holes.count) % state.holes.count
         state.selectedHole = state.holes[previousIndex]
-        state.revision += 1
+        bumpRevision(&state)
         save(state)
         return state
     }
@@ -217,4 +335,191 @@ final class GolfRoundWatchStore {
         state.gpsRefreshRevision += 1
         save(state)
     }
+
+    func loadAcceptedSwingPins() -> [GolfRoundGpsPin] {
+        guard let data = defaults.data(forKey: Self.acceptedSwingsKey),
+              let pins = try? JSONDecoder().decode([GolfRoundGpsPin].self, from: data) else {
+            return []
+        }
+        return pins
+    }
+
+    func saveAcceptedSwingPins(_ pins: [GolfRoundGpsPin]) {
+        guard let data = try? JSONEncoder().encode(pins) else { return }
+        defaults.set(data, forKey: Self.acceptedSwingsKey)
+    }
+
+    func clearAcceptedSwingPins() {
+        defaults.removeObject(forKey: Self.acceptedSwingsKey)
+    }
+
+    func hasAcceptedSwing(on hole: String) -> Bool {
+        loadAcceptedSwingPins().contains { $0.hole == hole }
+    }
+
+    func hasUndoableSwing(on hole: String) -> Bool {
+        if hasAcceptedSwing(on: hole) { return true }
+        guard let state = load() else { return false }
+        return state.pendingGpsPins.contains { $0.hole == hole }
+    }
+
+    func isPinWithinDedupRadius(
+        hole: String,
+        latitude: Double,
+        longitude: Double
+    ) -> Bool {
+        let candidate = GolfRoundGpsPin(
+            hole: hole,
+            latitude: latitude,
+            longitude: longitude
+        )
+        let pending = load()?.pendingGpsPins.filter { $0.hole == hole } ?? []
+        let accepted = loadAcceptedSwingPins().filter { $0.hole == hole }
+        for existing in accepted + pending {
+            if yardsBetweenPin(existing, candidate) < Self.dedupRadiusYards {
+                return true
+            }
+        }
+        return false
+    }
+
+    func pruneAcceptedSwingPins(matching undos: [GolfRoundGpsPin]) {
+        guard !undos.isEmpty else { return }
+        let pending = load()?.pendingGpsPins ?? []
+        var accepted = loadAcceptedSwingPins()
+        accepted.removeAll { pin in
+            guard undos.contains(where: { pinsApproximatelyEqual(pin, $0) }) else {
+                return false
+            }
+            // Keep swings still waiting to sync to the phone.
+            if pending.contains(where: { pinsApproximatelyEqual(pin, $0) }) {
+                return false
+            }
+            return true
+        }
+        saveAcceptedSwingPins(accepted)
+    }
+
+    func pruneLastAcceptedSwing(on hole: String) {
+        var accepted = loadAcceptedSwingPins()
+        guard let index = accepted.lastIndex(where: { $0.hole == hole }) else { return }
+        accepted.remove(at: index)
+        saveAcceptedSwingPins(accepted)
+    }
+
+    func clearPendingSyncQueues() {
+        guard var state = load() else { return }
+        guard !state.pendingGpsPins.isEmpty || !state.pendingGpsPinUndos.isEmpty else {
+            return
+        }
+        state.pendingGpsPins = []
+        state.pendingGpsPinUndos = []
+        save(state)
+    }
+
+  /// Records a detected full swing: pins GPS, increments score, and dedupes
+  /// additional swings within 25 yards on the same hole (practice swings).
+    @discardableResult
+    func recordDetectedSwing(
+        hole: String,
+        latitude: Double,
+        longitude: Double
+    ) -> GolfRoundSharedState? {
+        guard var state = load(), state.isActiveRound else { return nil }
+
+        if isPinWithinDedupRadius(
+            hole: hole,
+            latitude: latitude,
+            longitude: longitude
+        ) {
+            return nil
+        }
+
+        let pin = GolfRoundGpsPin(
+            hole: hole,
+            latitude: latitude,
+            longitude: longitude
+        )
+
+        state.pendingGpsPinUndos.removeAll { $0.hole == hole }
+
+        var accepted = loadAcceptedSwingPins()
+        accepted.append(pin)
+        saveAcceptedSwingPins(accepted)
+
+        state.pendingGpsPins.append(pin)
+
+        let currentScore = state.scores[hole] ?? 0
+        state.scores[hole] = min(99, currentScore + 1)
+        bumpRevision(&state)
+        save(state)
+        return state
+    }
+
+    @discardableResult
+    func recordManualPin(
+        hole: String,
+        latitude: Double,
+        longitude: Double
+    ) -> GolfRoundSharedState? {
+        guard var state = load(), state.isActiveRound else { return nil }
+
+        let pin = GolfRoundGpsPin(
+            hole: hole,
+            latitude: latitude,
+            longitude: longitude
+        )
+        state.pendingGpsPins.append(pin)
+        bumpRevision(&state)
+        save(state)
+        return state
+    }
+
+    @discardableResult
+    func undoLastDetectedSwing() -> GolfRoundSharedState? {
+        guard var state = load(), state.isActiveRound else { return nil }
+        let hole = state.selectedHole
+
+        var accepted = loadAcceptedSwingPins()
+        let removed: GolfRoundGpsPin
+
+        if let index = accepted.lastIndex(where: { $0.hole == hole }) {
+            removed = accepted.remove(at: index)
+            saveAcceptedSwingPins(accepted)
+        } else if let pendingIndex = state.pendingGpsPins.lastIndex(where: { $0.hole == hole }) {
+            removed = state.pendingGpsPins.remove(at: pendingIndex)
+        } else {
+            return nil
+        }
+
+        if let pendingIndex = state.pendingGpsPins.lastIndex(where: {
+            pinsApproximatelyEqual($0, removed)
+        }) {
+            state.pendingGpsPins.remove(at: pendingIndex)
+        }
+
+        let duplicateUndo = state.pendingGpsPinUndos.contains {
+            pinsApproximatelyEqual($0, removed)
+        }
+        if !duplicateUndo {
+            state.pendingGpsPinUndos.append(removed)
+        }
+
+        let currentScore = state.scores[hole] ?? 0
+        state.scores[hole] = max(0, currentScore - 1)
+        bumpRevision(&state)
+        save(state)
+        return state
+    }
+}
+
+private func yardsBetweenPin(_ from: GolfRoundGpsPin, _ to: GolfRoundGpsPin) -> Int {
+    let start = CLLocation(latitude: from.latitude, longitude: from.longitude)
+    let end = CLLocation(latitude: to.latitude, longitude: to.longitude)
+    return Int((start.distance(from: end) * 1.09361).rounded())
+}
+
+private func pinsApproximatelyEqual(_ lhs: GolfRoundGpsPin, _ rhs: GolfRoundGpsPin) -> Bool {
+    guard lhs.hole == rhs.hole else { return false }
+    return yardsBetweenPin(lhs, rhs) < 3
 }
