@@ -57,24 +57,39 @@ struct ContentView: View {
                     totalLabel(state)
                 }
 
-                yardageAndStatsRow(state)
+                if viewModel.isPuttMode {
+                    puttModeView(state)
+                } else {
+                    yardageAndStatsRow(state)
 
-                HStack(spacing: 6) {
-                    scoreTapBlock(state)
-                    puttsTapBlock(state)
-                }
+                    HStack(spacing: 6) {
+                        scoreTapBlock(state)
+                        puttsTapBlock(state)
+                    }
 
-                if viewModel.canUndoLastSwing {
+                    if viewModel.canUndoLastSwing {
+                        Button {
+                            viewModel.undoLastSwing()
+                        } label: {
+                            Label("Undo last swing", systemImage: "arrow.uturn.backward")
+                                .font(.caption2.weight(.semibold))
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 6)
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(.orange)
+                    }
+
                     Button {
-                        viewModel.undoLastSwing()
+                        viewModel.recordLostBall()
                     } label: {
-                        Label("Undo last swing", systemImage: "arrow.uturn.backward")
+                        Label("Lost ball (+1)", systemImage: "xmark.circle")
                             .font(.caption2.weight(.semibold))
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 6)
                     }
                     .buttonStyle(.bordered)
-                    .tint(.orange)
+                    .tint(.red)
                 }
             }
             .padding(.horizontal, 8)
@@ -89,6 +104,54 @@ struct ContentView: View {
         .sheet(isPresented: $showingPuttsPicker) {
             puttsPickerSheet
         }
+    }
+
+    private func puttModeView(_ state: GolfRoundSharedState) -> some View {
+        let putts = max(state.currentHolePutts, 0)
+        return VStack(spacing: 10) {
+            Text("ON THE GREEN")
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(accentGreen)
+
+            if let yards = viewModel.yardsToGreen, yards >= 0 {
+                Text("\(yards * 3) ft to pin")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Text("\(putts)")
+                .font(.system(size: 44, weight: .bold, design: .rounded))
+                .monospacedDigit()
+
+            Text("PUTTS")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 16) {
+                Button {
+                    viewModel.decrementPutts()
+                } label: {
+                    Image(systemName: "minus.circle.fill")
+                        .font(.title2)
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    viewModel.incrementPutts()
+                } label: {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.title2)
+                        .foregroundStyle(accentGreen)
+                }
+                .buttonStyle(.plain)
+            }
+
+            scoreTapBlock(state)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 8)
+        .background(Color.white.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 
     private var holeSwipeGesture: some Gesture {

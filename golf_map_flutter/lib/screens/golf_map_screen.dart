@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -12,14 +13,23 @@ import 'package:permission_handler/permission_handler.dart';
 import '../config/app_config.dart';
 import '../config/app_theme.dart';
 import '../models/golf_feature.dart';
+import '../models/health_workout_mode.dart';
 import '../models/measurement_chain.dart';
 import '../models/pinned_shot.dart';
+import '../models/pin_type.dart';
 import '../models/saved_round.dart';
 import '../services/app_preferences_service.dart';
+import '../services/club_bag_service.dart';
+import '../services/club_suggestion_service.dart';
 import '../services/course_visit_service.dart';
 import '../services/golf_data_service.dart';
+import '../services/health_workout_service.dart';
 import '../services/round_live_activity_service.dart';
+import '../services/round_recap_share_service.dart';
 import '../services/round_storage_service.dart';
+import '../services/shot_dispersion_service.dart';
+import '../services/weather_service.dart';
+import '../utils/weather_adjustment.dart';
 import '../utils/geo_utils.dart';
 import '../widgets/distance_details_sheet.dart';
 import '../widgets/golf_map_view.dart';
@@ -27,6 +37,7 @@ import '../widgets/hole_selector.dart';
 import '../widgets/hole_stats_panel.dart';
 import '../widgets/score_panel.dart';
 import '../widgets/track_shot_button.dart';
+import 'club_bag_screen.dart';
 import 'gps_to_green_screen.dart';
 
 class GolfMapScreen extends StatefulWidget {
@@ -36,32 +47,52 @@ class GolfMapScreen extends StatefulWidget {
     this.initialScores,
     this.initialPutts,
     this.initialPinnedShots,
+    this.initialMeasurementChains,
+    this.initialLockedHoles,
     this.existingRoundId,
     this.existingRoundPlayedAt,
+    this.startHealthWorkout,
   });
 
   final String initialCourse;
   final Map<String, int>? initialScores;
   final Map<String, int>? initialPutts;
   final Map<String, List<PinnedShot>>? initialPinnedShots;
+  final Map<String, List<MeasurementChainPoint>>? initialMeasurementChains;
+  final Set<String>? initialLockedHoles;
   final String? existingRoundId;
   final DateTime? existingRoundPlayedAt;
+  final bool? startHealthWorkout;
 
   @override
   State<GolfMapScreen> createState() => _GolfMapScreenState();
 }
 
 class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserver {
+  static const _mapEdgeInset = 15.0;
+  static const _mapSidebarWidth = 52.0;
+  static const _mapChromeGap = 8.0;
+  static const _mapHeaderRowHeight = 52.0;
+
   final _dataService = GolfDataService();
   final _roundStorage = RoundStorageService();
   final _appPrefs = AppPreferencesService();
   final _courseVisits = CourseVisitService();
   final _liveActivity = RoundLiveActivityService.instance;
+  final _weatherService = WeatherService();
+  final _clubBagService = ClubBagService();
+  final _clubSuggestionService = ClubSuggestionService();
+  final _dispersionService = ShotDispersionService();
+  final _recapShareService = RoundRecapShareService();
+  final _healthWorkout = HealthWorkoutService.instance;
   final _mapController = MapController();
   final _mapViewportKey = GlobalKey();
   final _mapHeaderKey = GlobalKey();
   final _mapCourseNameKey = GlobalKey();
   final _mapHolePickerKey = GlobalKey();
+  final _mapLeftToolbarKey = GlobalKey();
+  final _mapLeftControlsKey = GlobalKey();
+  final _mapDeleteButtonKey = GlobalKey();
   final _mapBottomBarKey = GlobalKey();
   final _mapSidebarKey = GlobalKey();
   int _holeFocusGeneration = 0;
@@ -74,6 +105,8 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
   final Map<String, int> _scores = {};
   final Map<String, int> _putts = {};
   final Map<String, List<PinnedShot>> _pinnedShots = {};
+  final Map<String, List<MeasurementChainPoint>> _measurementChainsByHole = {};
+  final Set<String> _lockedHoles = {};
 
   bool _loading = true;
   bool _mapReady = false;
@@ -107,6 +140,22 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
   StreamSubscription<String>? _stateChangeSub;
   int _mapVisualEpoch = 0;
 
+  ClubSuggestion? _clubSuggestion;
+  int? _playsLikeMiddle;
+  bool _clubUsesAimTarget = false;
+  final Map<String, LatLng> _clubAimByHole = {};
+  bool _clubAimPlacementMode = false;
+  bool _gpsSimMode = false;
+  bool _gpsSimPlacementMode = false;
+  bool _autoAdvanceHole = true;
+  bool _showDispersion = false;
+  List<DispersionPoint> _dispersionPoints = [];
+  DateTime? _enteredGreenAt;
+  bool _autoAdvanceTriggeredForHole = false;
+  HealthWorkoutMode _healthWorkoutMode = HealthWorkoutMode.always;
+  bool _healthWorkoutPromptHandled = false;
+  Future<void>? _preferencesLoadFuture;
+
   List<GolfFeature> get _currentHoleFeatures {
     final course = _selectedCourse;
     if (course == null) return [];
@@ -122,29 +171,72 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
   bool get _usingGpsForShot => isUsingGpsForShot(
         _userCoord,
         _currentHoleFeatures,
-        course: _selectedCourse,
-        hole: _selectedHole,
       );
 
   LatLng? get _measurementOrigin => shotDistanceOrigin(
         _userCoord,
         _currentHoleFeatures,
-        selectedTeeFeatureId: _selectedTeeFeatureId,
-        course: _selectedCourse,
-        hole: _selectedHole,
       );
 
-  int? get _holeYardage {
-    final teeId = _selectedTeeFeatureId;
-    if (teeId == null) return null;
-    return holeYardageFromSelectedTee(_currentHoleFeatures, teeId);
-  }
+  int? get _holeYardage => _yardageForHole(_currentHoleFeatures);
 
   List<PinnedShot> get _currentHolePinnedShots =>
       _pinnedShots[_selectedHole] ?? const [];
 
+  bool get _isCurrentHoleLocked => _lockedHoles.contains(_selectedHole);
+
+  LatLng? get _clubAimPoint => _clubAimByHole[_selectedHole];
+
+  bool get _allowDriverSuggestion {
+    if (_currentHolePinnedShots.isNotEmpty) return false;
+    if (_lockedMeasurementPoints.isNotEmpty) return false;
+    final coord = _userCoord;
+    if (coord == null) return false;
+    return isUserOnTeeBox(coord, _currentHoleFeatures);
+  }
+
+  LatLng? get _clubSuggestionOrigin => _userCoord;
+
+  LatLng? get _clubSuggestionTarget {
+    final aimPoint = _clubAimPoint;
+    if (aimPoint != null) return aimPoint;
+
+    return _greenCenter ?? greenCenterForHole(_currentHoleFeatures);
+  }
+
+  LatLng? get _clubAimLineOrigin => _userCoord ?? _measurementOrigin;
+
+  LatLng? get _bunkerReferencePoint {
+    if (_isCurrentHoleLocked) {
+      return _lastTrackedPointForHole(_selectedHole);
+    }
+
+    if (_usingGpsForShot && _userCoord != null) {
+      return _userCoord;
+    }
+
+    final lastTracked = _lastTrackedPointForHole(_selectedHole);
+    if (lastTracked != null) return lastTracked;
+
+    final holeFeatures = _currentHoleFeatures;
+    return teePointById(holeFeatures, _selectedTeeFeatureId) ??
+        longestTeeForHole(holeFeatures) ??
+        _userCoord;
+  }
+
+  List<BunkerDistance> get _mapBunkerDistances {
+    if (!_showBunkerDistancesOnMap) return const [];
+
+    final from = _bunkerReferencePoint;
+    if (from == null) return const [];
+
+    return bunkerDistancesFromPoint(from, _currentHoleFeatures);
+  }
+
   bool get _showIdealLine =>
-      _lockedMeasurementPoints.isEmpty && _idealLineEnabled;
+      !_isCurrentHoleLocked &&
+      _lockedMeasurementPoints.isEmpty &&
+      _idealLineEnabled;
 
   @override
   void initState() {
@@ -158,8 +250,21 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
         }
       }
     }
+    if (widget.initialMeasurementChains != null) {
+      for (final entry in widget.initialMeasurementChains!.entries) {
+        final points = entry.value;
+        if (points.isNotEmpty) {
+          _measurementChainsByHole[entry.key] =
+              List<MeasurementChainPoint>.from(points);
+        }
+      }
+    }
+    if (widget.initialLockedHoles != null) {
+      _lockedHoles.addAll(widget.initialLockedHoles!);
+    }
     _loadData();
-    _loadPreferences();
+    _preferencesLoadFuture = _loadPreferences();
+    unawaited(_loadClubBag());
     _initLocation();
     unawaited(_bootstrapLiveActivity());
     _stateChangeSub = _liveActivity.stateChangeStream.listen((event) {
@@ -174,6 +279,10 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
   Future<void> _bootstrapLiveActivity() async {
     _liveActivitySession = await _liveActivity.beginRound();
     if (!mounted) return;
+    if (widget.existingRoundId != null) {
+      await _liveActivity.acknowledgePendingGpsPins();
+      await _liveActivity.clearPendingGpsPinUndos();
+    }
     _liveActivityBootstrapped = true;
     _tryActivateLiveActivitySync();
   }
@@ -289,6 +398,90 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
     _liveActivityReady = true;
     _liveActivity.resetGpsThrottle();
     _startLiveActivityGpsTimer();
+    unawaited(_maybeStartHealthWorkout());
+  }
+
+  Future<void> _maybeStartHealthWorkout() async {
+    if (!Platform.isIOS) return;
+    if (widget.existingRoundId != null) return;
+
+    if (widget.startHealthWorkout != null) {
+      if (widget.startHealthWorkout!) {
+        final available = await _healthWorkout.isAvailable();
+        if (available) {
+          await _healthWorkout.startGolfWorkout();
+        }
+      }
+      return;
+    }
+
+    await (_preferencesLoadFuture ??= _loadPreferences());
+    if (!mounted) return;
+
+    switch (_healthWorkoutMode) {
+      case HealthWorkoutMode.never:
+        return;
+      case HealthWorkoutMode.always:
+        await _healthWorkout.startGolfWorkout();
+        return;
+      case HealthWorkoutMode.ask:
+        if (_healthWorkoutPromptHandled) return;
+        _healthWorkoutPromptHandled = true;
+
+        final available = await _healthWorkout.isAvailable();
+        if (!mounted || !available) return;
+
+        final start = await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => AlertDialog(
+            backgroundColor: AppTheme.panelBg,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+              side: const BorderSide(color: AppTheme.panelBorder),
+            ),
+            title: const Text(
+              'Start Apple Health workout?',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 17,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            content: const Text(
+              'Track this round as a golf workout in Apple Health. '
+              'You can change this in Hole details → settings.',
+              style: TextStyle(
+                color: AppTheme.textMuted,
+                fontSize: 14,
+                height: 1.35,
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text(
+                  'Not now',
+                  style: TextStyle(color: AppTheme.textMuted),
+                ),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text(
+                  'Start workout',
+                  style: TextStyle(
+                    color: AppTheme.accentGreen,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+        if (start == true) {
+          await _healthWorkout.startGolfWorkout();
+        }
+    }
   }
 
   void _tryActivateLiveActivitySync() {
@@ -299,6 +492,37 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
       _activateLiveActivitySync();
     }
     _syncLiveActivity(force: true);
+    unawaited(_pushWatchRoundStateWhenReady());
+  }
+
+  Future<void> _pushWatchRoundStateWhenReady() async {
+    if (_holes.isEmpty || _selectedCourse == null) return;
+    await _liveActivity.syncInteractiveRoundState(
+      holes: _holes,
+      selectedHole: _selectedHole,
+      scores: {
+        for (final hole in _holes)
+          hole: _scores[_scoreKey(_selectedCourse!, hole)] ?? 0,
+      },
+      putts: {
+        for (final hole in _holes)
+          hole: _putts[_scoreKey(_selectedCourse!, hole)] ?? 0,
+      },
+      pars: {
+        for (final hole in _holes)
+          hole: _dataService.statsForHole(_features, _selectedCourse!, hole)?.par ?? 0,
+      },
+      handicaps: {
+        for (final hole in _holes)
+          hole: _dataService.statsForHole(_features, _selectedCourse!, hole)?.handicap ?? 0,
+      },
+      courseName: _selectedCourse!,
+      yardsToGreen: _yardsToGreenForLiveActivity,
+      greenLatitude: greenCenterForHole(_currentHoleFeatures)?.latitude,
+      greenLongitude: greenCenterForHole(_currentHoleFeatures)?.longitude,
+      sessionId: _liveActivity.roundSessionId,
+    );
+    await _liveActivity.pushWatchRoundState();
   }
 
   LocationSettings get _locationSettings {
@@ -318,16 +542,129 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
     );
   }
 
+  Future<void> _loadClubBag() async {
+    final clubs = await _clubBagService.loadClubs();
+    if (!mounted) return;
+    _clubSuggestionService.updateClubs(clubs);
+    unawaited(_refreshWeatherAndSuggestions());
+  }
+
+  Future<void> _openClubBagEditor() async {
+    final updated = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(builder: (_) => const ClubBagScreen()),
+    );
+    if (updated == true && mounted) {
+      await _loadClubBag();
+    }
+  }
+
   Future<void> _loadPreferences() async {
     final showScoreTarget = await _appPrefs.getShowScoreTarget();
     final idealLineEnabled = await _appPrefs.getIdealLineEnabled();
     final mapOverlayEnabled = await _appPrefs.getMapOverlayEnabled();
+    final autoAdvanceHole = await _appPrefs.getAutoAdvanceHole();
+    final showDispersion = await _appPrefs.getShowShotDispersion();
+    final healthWorkoutMode = await _appPrefs.getHealthWorkoutMode();
+    final gpsSimMode = await _appPrefs.getGpsSimModeEnabled();
     if (!mounted) return;
     setState(() {
       _showScoreTarget = showScoreTarget;
       _idealLineEnabled = idealLineEnabled;
       _mapOverlayEnabled = mapOverlayEnabled;
+      _autoAdvanceHole = autoAdvanceHole;
+      _showDispersion = showDispersion;
+      _healthWorkoutMode = healthWorkoutMode;
+      _gpsSimMode = gpsSimMode;
     });
+    if (gpsSimMode) {
+      _seedSimulatedGpsIfNeeded();
+    }
+  }
+
+  LatLng? _defaultSimGpsForHole() {
+    final holeFeatures = _currentHoleFeatures;
+    return teePointById(holeFeatures, _selectedTeeFeatureId) ??
+        longestTeeForHole(holeFeatures) ??
+        greenCenterForHole(holeFeatures);
+  }
+
+  void _seedSimulatedGpsIfNeeded() {
+    final seed = _defaultSimGpsForHole();
+    if (seed == null) return;
+    setState(() => _userCoord = seed);
+    _refreshMeasurementDisplay();
+    unawaited(_refreshWeatherAndSuggestions());
+  }
+
+  void _setSimulatedGps(LatLng point) {
+    setState(() => _userCoord = point);
+    _refreshMeasurementDisplay();
+    unawaited(_refreshWeatherAndSuggestions());
+    if (_liveActivityReady) {
+      unawaited(_syncLiveActivityGps(force: true));
+    }
+  }
+
+  Future<void> _toggleGpsSimMode() async {
+    final enabling = !_gpsSimMode;
+    setState(() {
+      _gpsSimMode = enabling;
+      _gpsSimPlacementMode = false;
+      if (!enabling) {
+        _clubAimPlacementMode = false;
+      }
+    });
+    await _appPrefs.setGpsSimModeEnabled(enabling);
+
+    if (enabling) {
+      _seedSimulatedGpsIfNeeded();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'GPS test mode — drag the dot or tap “Place GPS” then tap the map',
+            ),
+          ),
+        );
+      }
+      return;
+    }
+
+    try {
+      final position = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+        ),
+      );
+      if (mounted) {
+        setState(() {
+          _userCoord = LatLng(position.latitude, position.longitude);
+        });
+        _refreshMeasurementDisplay();
+        unawaited(_refreshWeatherAndSuggestions());
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('GPS test mode off — could not read GPS')),
+        );
+      }
+    }
+  }
+
+  void _toggleGpsSimPlacementMode() {
+    if (!_gpsSimMode) {
+      unawaited(_toggleGpsSimMode().then((_) {
+        if (mounted) setState(() => _gpsSimPlacementMode = true);
+      }));
+      return;
+    }
+    setState(() => _gpsSimPlacementMode = !_gpsSimPlacementMode);
+    if (_gpsSimPlacementMode && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Tap the map to place your test GPS position')),
+      );
+    }
   }
 
   MapBackground get _mapBackground =>
@@ -341,6 +678,7 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
     _liveActivityGpsTimer?.cancel();
     _liveActivityGpsSlowTimer?.cancel();
     _positionSub?.cancel();
+    unawaited(_healthWorkout.endGolfWorkout());
     unawaited(_liveActivity.end());
     super.dispose();
   }
@@ -396,6 +734,7 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
       yardsToGreen: _yardsToGreenForLiveActivity,
       greenLatitude: green?.latitude,
       greenLongitude: green?.longitude,
+      sessionId: _liveActivity.roundSessionId,
     ));
   }
 
@@ -447,11 +786,15 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
     if (changes.pendingGpsPins.isNotEmpty) {
       for (final pin in changes.pendingGpsPins) {
         if (!_holes.contains(pin.hole)) continue;
+        final pinType = pin.pinKind == 'lostBall'
+            ? PinType.lostBall
+            : PinType.shot;
         _addPinnedShot(
           LatLng(pin.latitude, pin.longitude),
-          'watch',
+          pin.pinKind == 'lostBall' ? 'lostBall' : 'watch',
           hole: pin.hole,
           showSnackBar: pin.hole == _selectedHole,
+          pinType: pinType,
         );
       }
     }
@@ -473,9 +816,36 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
         return;
       }
       _pendingFocusHole = changes.selectedHole;
+      _persistMeasurementChainForHole(_selectedHole);
       _clearDistance();
       _liveActivity.resetGpsThrottle();
       _refreshHoleState(holeOverride: changes.selectedHole);
+      unawaited(_liveActivity.syncInteractiveRoundState(
+        holes: _holes,
+        selectedHole: _selectedHole,
+        scores: {
+          for (final hole in _holes)
+            hole: _scores[_scoreKey(course, hole)] ?? 0,
+        },
+        putts: {
+          for (final hole in _holes)
+            hole: _putts[_scoreKey(course, hole)] ?? 0,
+        },
+        pars: {
+          for (final hole in _holes)
+            hole: _dataService.statsForHole(_features, course, hole)?.par ?? 0,
+        },
+        handicaps: {
+          for (final hole in _holes)
+            hole:
+                _dataService.statsForHole(_features, course, hole)?.handicap ??
+                    0,
+        },
+        courseName: course,
+        yardsToGreen: _yardsToGreenForLiveActivity,
+        greenLatitude: greenCenterForHole(_currentHoleFeatures)?.latitude,
+        greenLongitude: greenCenterForHole(_currentHoleFeatures)?.longitude,
+      ));
       return;
     }
 
@@ -526,7 +896,8 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
 
     final shared = await _liveActivity.getSharedGpsYardage();
     if (shared != null &&
-        shared.gpsRefreshRevision > _liveActivity.lastSeenNativeGpsRevision) {
+        shared.gpsRefreshRevision > _liveActivity.lastSeenNativeGpsRevision &&
+        !_gpsSimMode) {
       _liveActivity.acknowledgeNativeGpsRevision(shared.gpsRefreshRevision);
       try {
         final position = await Geolocator.getCurrentPosition(
@@ -669,6 +1040,7 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
       locationSettings: _locationSettings,
     ).listen((position) {
       if (!mounted) return;
+      if (_gpsSimMode) return;
       setState(() {
         _userCoord = LatLng(position.latitude, position.longitude);
       });
@@ -676,10 +1048,92 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
         _recalculateMeasurementChain();
       }
       _refreshMeasurementDisplay();
+      unawaited(_refreshWeatherAndSuggestions());
       if (_liveActivityReady) {
         unawaited(_syncLiveActivityGps());
+        _checkAutoAdvanceHole();
       }
     });
+  }
+
+  Future<void> _refreshWeatherAndSuggestions() async {
+    final holeFeatures = _currentHoleFeatures;
+    final origin = _clubSuggestionOrigin;
+    final target = _clubSuggestionTarget;
+    if (origin == null || target == null) {
+      if (!mounted) return;
+      setState(() {
+        _playsLikeMiddle = null;
+        _clubSuggestion = null;
+        _clubUsesAimTarget = false;
+      });
+      return;
+    }
+
+    final weather = await _weatherService.fetchForLocation(origin);
+    if (!mounted) return;
+
+    final usesPlacedPoint = _clubAimPoint != null;
+    final int? actualYards = usesPlacedPoint
+        ? metersToYards(distanceMeters(origin, target))
+        : greenDistancesFromPoint(origin, holeFeatures).middle;
+    final bearing = bearingBetween(origin, target);
+
+    ClubSuggestion? suggestion;
+    var playsLike = actualYards;
+
+    if (playsLike != null && playsLike > 0) {
+      playsLike = playsLikeYards(
+        actualYards: playsLike,
+        temperatureF: weather?.temperatureF,
+        windMph: weather?.windMph,
+        windDirectionDeg: weather?.windDirectionDeg,
+        shotBearingDeg: bearing,
+        elevationFeet: weather?.elevationFeet,
+      );
+      suggestion = _clubSuggestionService.suggest(
+        playsLike,
+        allowDriver: _allowDriverSuggestion,
+      );
+    }
+
+    setState(() {
+      _playsLikeMiddle = playsLike;
+      _clubSuggestion = suggestion;
+      _clubUsesAimTarget = usesPlacedPoint;
+    });
+  }
+
+  void _checkAutoAdvanceHole() {
+    if (!_autoAdvanceHole || _userCoord == null || _holes.length <= 1) return;
+
+    final onGreen = isPointInGreen(_userCoord!, _currentHoleFeatures);
+    if (onGreen) {
+      _enteredGreenAt ??= DateTime.now();
+      if (!_autoAdvanceTriggeredForHole &&
+          DateTime.now().difference(_enteredGreenAt!) >
+              const Duration(seconds: 12)) {
+        _autoAdvanceTriggeredForHole = true;
+        _goToNextHole();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Advanced to hole $_selectedHole')),
+        );
+      }
+    } else {
+      _enteredGreenAt = null;
+      _autoAdvanceTriggeredForHole = false;
+    }
+  }
+
+  Future<void> _loadDispersionForCurrentHole() async {
+    final course = _selectedCourse;
+    if (course == null || !_showDispersion) return;
+    final points = await _dispersionService.pointsForHole(
+      courseName: course,
+      hole: _selectedHole,
+    );
+    if (!mounted) return;
+    setState(() => _dispersionPoints = points);
   }
 
   void _refreshHoleState({String? holeOverride}) {
@@ -726,19 +1180,17 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
     }
     _refreshMeasurementDisplay();
 
-    _scheduleFocusOnHole(hole: selectedHole);
+    _pendingFocusHole = selectedHole;
+    unawaited(_refocusMapForCurrentHole());
     _tryActivateLiveActivitySync();
-  }
-
-  void _scheduleFocusOnHole({String? hole}) {
-    _pendingFocusHole = hole ?? _selectedHole;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        _focusOnHole(hole: _pendingFocusHole);
-      });
-    });
+    _restoreMeasurementChainForHole(selectedHole);
+    if (_showDispersion) {
+      unawaited(_loadDispersionForCurrentHole());
+    }
+    unawaited(_refreshWeatherAndSuggestions());
+    if (_gpsSimMode && _userCoord == null) {
+      _seedSimulatedGpsIfNeeded();
+    }
   }
 
   void _applyTeeSelectionForHole() {
@@ -748,16 +1200,13 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
       return;
     }
 
-    TeeOption selected;
     if (_preferredTeeLabel != null) {
-      selected = teeOptionByLabel(_currentHoleFeatures, _preferredTeeLabel!) ??
-          options.first;
-    } else {
-      selected = options.first;
-      _preferredTeeLabel = selected.label;
+      final selected = teeOptionByLabel(_currentHoleFeatures, _preferredTeeLabel!);
+      _selectedTeeFeatureId = selected?.featureId;
+      return;
     }
 
-    _selectedTeeFeatureId = selected.featureId;
+    _selectedTeeFeatureId = null;
   }
 
   int? _yardageForHole(List<GolfFeature> holeFeatures) {
@@ -818,6 +1267,27 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
         holePicker.localToGlobal(Offset(holePicker.size.width, 0)),
       );
       left = pickerRight.dx + 8;
+    }
+
+    final leftToolbar =
+        _mapLeftToolbarKey.currentContext?.findRenderObject() as RenderBox?;
+    if (leftToolbar != null && leftToolbar.hasSize) {
+      final toolbarRight = mapBox.globalToLocal(
+        leftToolbar.localToGlobal(Offset(leftToolbar.size.width, 0)),
+      );
+      left = math.max(left, toolbarRight.dx + 8);
+    }
+
+    final leftControls =
+        _mapLeftControlsKey.currentContext?.findRenderObject() as RenderBox?;
+    if (leftControls != null && leftControls.hasSize) {
+      final controlsRight = mapBox.globalToLocal(
+        leftControls.localToGlobal(Offset(leftControls.size.width, 0)),
+      );
+      left = math.max(left, controlsRight.dx + 8);
+      final controlsTop =
+          mapBox.globalToLocal(leftControls.localToGlobal(Offset.zero));
+      bottom = math.max(bottom, mapSize.height - controlsTop.dy + 2);
     }
 
     final bottomBar =
@@ -978,6 +1448,170 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
 
   String _scoreKey(String course, String hole) => '${course}_$hole';
 
+  LatLng? _lastTrackedPointForHole(String hole) {
+    final pins = _sortedPinnedShotsForHole(hole)
+        .where((shot) => shot.pinType != PinType.lostBall)
+        .toList();
+    if (pins.isNotEmpty) {
+      final last = pins.last;
+      return LatLng(last.latitude, last.longitude);
+    }
+
+    final chain = hole == _selectedHole
+        ? (_lockedMeasurementPoints.isNotEmpty
+            ? _lockedMeasurementPoints
+            : _measurementChainsByHole[hole])
+        : _measurementChainsByHole[hole];
+    if (chain != null && chain.isNotEmpty) {
+      return chain.last.point;
+    }
+    return null;
+  }
+
+  void _toggleHoleLock() {
+    if (_isCurrentHoleLocked) {
+      setState(() => _lockedHoles.remove(_selectedHole));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Hole unlocked — you can add shots')),
+        );
+      }
+      return;
+    }
+
+    _persistMeasurementChainForHole(_selectedHole);
+    setState(() => _lockedHoles.add(_selectedHole));
+    _refreshMeasurementDisplay();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Hole locked — using last pegged shot')),
+      );
+    }
+  }
+
+  void _lockAllHolesBeforeSave() {
+    _persistMeasurementChainForHole(_selectedHole);
+    setState(() {
+      _lockedHoles.addAll(_holes);
+    });
+  }
+
+  void _persistMeasurementChainForHole(String hole) {
+    if (_lockedMeasurementPoints.isEmpty) {
+      _measurementChainsByHole.remove(hole);
+      return;
+    }
+    _measurementChainsByHole[hole] = List<MeasurementChainPoint>.from(
+      _lockedMeasurementPoints,
+    );
+  }
+
+  void _restoreMeasurementChainForHole(String hole) {
+    final chain = _measurementChainsByHole[hole];
+    setState(() {
+      _lockedMeasurementPoints
+        ..clear()
+        ..addAll(chain ?? const []);
+      _selectedMeasurementPinIndex = null;
+    });
+    if (_lockedMeasurementPoints.isNotEmpty) {
+      _refreshMeasurementDisplay();
+    } else if (_lockedHoles.contains(hole)) {
+      _refreshMeasurementDisplay();
+    }
+  }
+
+  Map<String, List<MeasurementChainPoint>> _measurementChainsForSave() {
+    final chains = <String, List<MeasurementChainPoint>>{
+      for (final entry in _measurementChainsByHole.entries)
+        if (entry.value.isNotEmpty)
+          entry.key: List<MeasurementChainPoint>.from(entry.value),
+    };
+    if (_lockedMeasurementPoints.isNotEmpty) {
+      chains[_selectedHole] = List<MeasurementChainPoint>.from(
+        _lockedMeasurementPoints,
+      );
+    }
+    return chains;
+  }
+
+  Map<String, List<PinnedShot>> _pinnedShotsForSave() {
+    final pins = <String, List<PinnedShot>>{
+      for (final entry in _pinnedShots.entries)
+        if (entry.value.isNotEmpty)
+          entry.key: List<PinnedShot>.from(entry.value),
+    };
+
+    final course = _selectedCourse;
+    if (course == null) return pins;
+
+    for (final entry in _measurementChainsForSave().entries) {
+      _mergeMeasurementChainIntoPins(
+        pins,
+        hole: entry.key,
+        chain: entry.value,
+        course: course,
+      );
+    }
+    return pins;
+  }
+
+  void _mergeMeasurementChainIntoPins(
+    Map<String, List<PinnedShot>> pins, {
+    required String hole,
+    required List<MeasurementChainPoint> chain,
+    required String course,
+  }) {
+    if (chain.isEmpty) return;
+
+    final holeFeatures = _features
+        .where((f) => f.matchesCourse(course) && f.matchesHole(hole))
+        .toList();
+    final holePins = List<PinnedShot>.from(pins[hole] ?? const []);
+
+    for (final point in chain) {
+      final candidate = point.point;
+      final duplicate = holePins.any(
+        (shot) =>
+            metersToYards(
+              distanceMeters(
+                LatLng(shot.latitude, shot.longitude),
+                candidate,
+              ),
+            ) <
+            3,
+      );
+      if (duplicate) continue;
+
+      final fromPoint = holePins.isEmpty
+          ? candidate
+          : LatLng(holePins.last.latitude, holePins.last.longitude);
+      final shotNumber = holePins.length + 1;
+      final greenPoint = greenCenterForHole(holeFeatures);
+      final segmentYards = holePins.isEmpty && point.segmentYards <= 0
+          ? null
+          : point.segmentYards;
+
+      holePins.add(
+        PinnedShot(
+          shotNumber: shotNumber,
+          latitude: candidate.latitude,
+          longitude: candidate.longitude,
+          fromLatitude: fromPoint.latitude,
+          fromLongitude: fromPoint.longitude,
+          shotYards: segmentYards,
+          yardsToPin: greenPoint != null
+              ? greenDistancesFromPoint(candidate, holeFeatures).middle
+              : null,
+        ),
+      );
+    }
+
+    if (holePins.isNotEmpty) {
+      pins[hole] = holePins;
+    }
+  }
+
   void _clearDistance() {
     setState(() {
       _distanceInfo = null;
@@ -988,10 +1622,13 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
     });
   }
 
+  LatLng? get _chainOrigin =>
+      _isCurrentHoleLocked ? null : (_measurementOrigin ?? _userCoord);
+
   void _recalculateMeasurementChain() {
     if (_lockedMeasurementPoints.isEmpty) return;
 
-    final origin = _measurementOrigin;
+    final origin = _chainOrigin;
     if (origin == null) return;
 
     final updated = <MeasurementChainPoint>[];
@@ -1012,39 +1649,25 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
       _lockedMeasurementPoints
         ..clear()
         ..addAll(updated);
+      _shotOrigin = origin;
     });
   }
 
   void _addMeasurementChainPoint(LatLng point) {
-    final holeFeatures = _currentHoleFeatures;
-    final origin = _measurementOrigin;
-    final from = _lockedMeasurementPoints.isNotEmpty
-        ? _lockedMeasurementPoints.last.point
-        : origin;
-
-    if (from == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Select a tee box for the first shot')),
-      );
-      return;
-    }
-
-    final yards = metersToYards(distanceMeters(from, point));
-    final shotNumber = _lockedMeasurementPoints.length + 1;
-
     setState(() {
       _lockedMeasurementPoints.add(
         MeasurementChainPoint(
           point: point,
-          segmentYards: yards,
-          shotNumber: shotNumber,
+          segmentYards: 0,
+          shotNumber: _lockedMeasurementPoints.length + 1,
         ),
       );
-      _greenCenter = greenCenterForHole(holeFeatures);
-      _shotOrigin = origin;
+      _greenCenter = greenCenterForHole(_currentHoleFeatures);
       _selectedMeasurementPinIndex = null;
     });
+    _recalculateMeasurementChain();
     _refreshMeasurementDisplay();
+    unawaited(_refreshWeatherAndSuggestions());
   }
 
   void _selectMeasurementPin(int index) {
@@ -1083,6 +1706,7 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
   }
 
   void _deletePinnedShot(int index) {
+    if (_isCurrentHoleLocked) return;
     final pins = _sortedPinnedShotsForHole(_selectedHole);
     if (index < 0 || index >= pins.length) return;
 
@@ -1103,6 +1727,7 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
           teeLabel: shot.teeLabel,
           shotYards: shot.shotYards,
           yardsToPin: shot.yardsToPin,
+          pinType: shot.pinType,
         ),
       );
     }
@@ -1160,6 +1785,7 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
   }
 
   void _deleteMeasurementPin(int index) {
+    if (_isCurrentHoleLocked) return;
     if (index < 0 || index >= _lockedMeasurementPoints.length) return;
 
     setState(() {
@@ -1183,35 +1809,32 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
   }
 
   void _moveLockedMeasurementPoint(int index, LatLng newPoint) {
+    if (_isCurrentHoleLocked) return;
     if (index < 0 || index >= _lockedMeasurementPoints.length) return;
 
-    final origin = _measurementOrigin;
-
     final updated = List<MeasurementChainPoint>.from(_lockedMeasurementPoints);
-    final previous = index == 0 ? origin : updated[index - 1].point;
-    if (previous == null) return;
-
     updated[index] = MeasurementChainPoint(
       point: newPoint,
-      segmentYards: metersToYards(distanceMeters(previous, newPoint)),
+      segmentYards: updated[index].segmentYards,
       shotNumber: updated[index].shotNumber,
     );
-
-    if (index + 1 < updated.length) {
-      final next = updated[index + 1];
-      updated[index + 1] = MeasurementChainPoint(
-        point: next.point,
-        segmentYards: metersToYards(distanceMeters(newPoint, next.point)),
-        shotNumber: next.shotNumber,
-      );
-    }
 
     setState(() {
       _lockedMeasurementPoints
         ..clear()
         ..addAll(updated);
     });
+    _recalculateMeasurementChain();
     _refreshMeasurementDisplay();
+    if (_clubAimPoint != null) {
+      unawaited(_refreshWeatherAndSuggestions());
+    }
+  }
+
+  void _moveClubAimPoint(LatLng point) {
+    if (_isCurrentHoleLocked) return;
+    setState(() => _clubAimByHole[_selectedHole] = point);
+    unawaited(_refreshWeatherAndSuggestions());
   }
 
   void _handleLockedMeasurementDrag(int index, LatLng point) {
@@ -1223,10 +1846,33 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
   }
 
   GreenYardages? get _gpsGreenYardages {
-    if (!_usingGpsForShot || _userCoord == null) return null;
     final holeFeatures = _currentHoleFeatures;
     if (greenCenterForHole(holeFeatures) == null) return null;
-    return greenDistancesFromPoint(_userCoord!, holeFeatures);
+
+    final origin = _isCurrentHoleLocked
+        ? _lastTrackedPointForHole(_selectedHole)
+        : _userCoord;
+    if (origin == null) return null;
+    return greenDistancesFromPoint(origin, holeFeatures);
+  }
+
+  int? get _yardsFromUserToLastPin {
+    if (_isCurrentHoleLocked || _userCoord == null) return null;
+
+    final pins = _sortedPinnedShotsForHole(_selectedHole)
+        .where((shot) => shot.pinType != PinType.lostBall)
+        .toList();
+    LatLng? target;
+    if (pins.isNotEmpty) {
+      final last = pins.last;
+      target = LatLng(last.latitude, last.longitude);
+    } else if (_lockedMeasurementPoints.isNotEmpty) {
+      target = _lockedMeasurementPoints.last.point;
+    }
+    if (target == null) return null;
+
+    final yards = metersToYards(distanceMeters(_userCoord!, target));
+    return yards < 1 ? null : yards;
   }
 
   void _refreshMeasurementDisplay() {
@@ -1237,17 +1883,43 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
       return;
     }
 
-    final usingGps = _usingGpsForShot;
-    final origin = _measurementOrigin;
-    final bunkerFrom = usingGps ? _userCoord : origin;
-    final referencePoint =
-        _lockedMeasurementPoints.lastOrNull?.point ?? origin;
+    final usingGps = _usingGpsForShot && !_isCurrentHoleLocked;
+    final origin = _chainOrigin;
+    final bunkerFrom = _bunkerReferencePoint;
+    final lastTracked = _lastTrackedPointForHole(_selectedHole);
+    final referencePoint = _isCurrentHoleLocked
+        ? lastTracked
+        : (_lockedMeasurementPoints.lastOrNull?.point ?? origin ?? bunkerFrom);
+
+    final bunkerDistances = bunkerFrom == null
+        ? const <BunkerDistance>[]
+        : bunkerDistancesFromPoint(bunkerFrom, holeFeatures);
 
     if (referencePoint == null) {
       setState(() {
-        _distanceInfo = null;
         _greenCenter = greenPoint;
         _shotOrigin = origin;
+        _distanceInfo = bunkerFrom == null
+            ? null
+            : DistanceInfo(
+                greenYardages: const GreenYardages(
+                  front: 0,
+                  middle: 0,
+                  back: 0,
+                ),
+                bunkerDistances: bunkerDistances,
+                hasBunkerReference: true,
+                fromUserYards: null,
+                lockedSegments: const [],
+                activeSegmentYards: null,
+                holeNumber: _selectedHole,
+                holeCoord: [greenPoint.longitude, greenPoint.latitude],
+                shotOriginCoord: [
+                  bunkerFrom.longitude,
+                  bunkerFrom.latitude,
+                ],
+                usingGps: usingGps,
+              );
       });
       return;
     }
@@ -1257,9 +1929,7 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
       _shotOrigin = origin;
       _distanceInfo = DistanceInfo(
         greenYardages: greenDistancesFromPoint(referencePoint, holeFeatures),
-        bunkerDistances: bunkerFrom == null
-            ? const []
-            : bunkerDistancesFromPoint(bunkerFrom, holeFeatures),
+        bunkerDistances: bunkerDistances,
         hasBunkerReference: bunkerFrom != null,
         fromUserYards: _lockedMeasurementPoints.isEmpty
             ? null
@@ -1282,7 +1952,56 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
     });
   }
 
-  void _handleMapTap(LatLng tapped) => _addMeasurementChainPoint(tapped);
+  void _handleMapTap(LatLng tapped) {
+    if (_isCurrentHoleLocked) return;
+    if (_gpsSimMode && _gpsSimPlacementMode) {
+      setState(() => _gpsSimPlacementMode = false);
+      _setSimulatedGps(tapped);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Test GPS position set')),
+        );
+      }
+      return;
+    }
+    if (_clubAimPlacementMode) {
+      setState(() {
+        _clubAimByHole[_selectedHole] = tapped;
+        _clubAimPlacementMode = false;
+      });
+      unawaited(_refreshWeatherAndSuggestions());
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Club target set — distance to this point')),
+        );
+      }
+      return;
+    }
+    _addMeasurementChainPoint(tapped);
+  }
+
+  void _toggleClubAimPlacementMode() {
+    if (_isCurrentHoleLocked) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Unlock the hole to set a club target')),
+      );
+      return;
+    }
+    setState(() => _clubAimPlacementMode = !_clubAimPlacementMode);
+    if (_clubAimPlacementMode && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Tap the map where you want to land')),
+      );
+    }
+  }
+
+  void _clearClubAimPoint() {
+    setState(() {
+      _clubAimByHole.remove(_selectedHole);
+      _clubAimPlacementMode = false;
+    });
+    unawaited(_refreshWeatherAndSuggestions());
+  }
 
   void _selectTee(dynamic featureId) {
     TeeOption? match;
@@ -1371,6 +2090,13 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
         setState(() => _showScoreTarget = value);
         _appPrefs.setShowScoreTarget(value);
       },
+      healthWorkoutMode: Platform.isIOS ? _healthWorkoutMode : null,
+      onHealthWorkoutModeChanged: Platform.isIOS
+          ? (mode) {
+              setState(() => _healthWorkoutMode = mode);
+              _appPrefs.setHealthWorkoutMode(mode);
+            }
+          : null,
     );
   }
 
@@ -1393,21 +2119,26 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
     String source, {
     String? hole,
     bool showSnackBar = true,
+    PinType pinType = PinType.shot,
   }) {
     final course = _selectedCourse;
     if (course == null) return;
 
     final targetHole = hole ?? _selectedHole;
+    if (targetHole == _selectedHole && _isCurrentHoleLocked) {
+      if (showSnackBar && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Unlock the hole to add shots')),
+        );
+      }
+      return;
+    }
+
     final holeFeatures = _features
         .where(
           (f) => f.matchesCourse(course) && f.matchesHole(targetHole),
         )
         .toList();
-    final teeFeatureId = targetHole == _selectedHole
-        ? _selectedTeeFeatureId
-        : teeOptionsForHole(holeFeatures).firstOrNull?.featureId;
-    final teePoint = teePointById(holeFeatures, teeFeatureId) ??
-        longestTeeForHole(holeFeatures);
     final holePins =
         List<PinnedShot>.from(_pinnedShots[targetHole] ?? const []);
     final shotNumber = holePins.length + 1;
@@ -1426,24 +2157,20 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
       }
     }
 
-    if (holePins.isEmpty && teePoint == null && !isWatchPin) {
-      if (showSnackBar && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Select a tee box for the first shot')),
-        );
-      }
-      return;
-    }
-
     final LatLng fromPoint;
+    int? shotYards;
     if (holePins.isEmpty) {
-      fromPoint = teePoint ?? point;
+      fromPoint = _userCoord ?? point;
+      shotYards = _userCoord == null
+          ? null
+          : metersToYards(distanceMeters(fromPoint, point));
+      if (shotYards != null && shotYards < 1) shotYards = null;
     } else {
       final previous = holePins.last;
       fromPoint = LatLng(previous.latitude, previous.longitude);
+      shotYards = metersToYards(distanceMeters(fromPoint, point));
     }
 
-    final shotYards = metersToYards(distanceMeters(fromPoint, point));
     final greenPoint = greenCenterForHole(holeFeatures);
     final yardsToPin = greenPoint != null
         ? greenDistancesFromPoint(point, holeFeatures).middle
@@ -1456,9 +2183,9 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
         longitude: point.longitude,
         fromLatitude: fromPoint.latitude,
         fromLongitude: fromPoint.longitude,
-        teeLabel: shotNumber == 1 ? _preferredTeeLabel : null,
         shotYards: shotYards,
         yardsToPin: yardsToPin,
+        pinType: pinType,
       ),
     );
 
@@ -1466,16 +2193,23 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
       _pinnedShots[targetHole] = holePins;
     });
 
+    if (targetHole == _selectedHole) {
+      unawaited(_refreshWeatherAndSuggestions());
+    }
+
     if (showSnackBar && mounted) {
       final sourceLabel = switch (source) {
         'GPS' => 'GPS',
         'watch' => 'watch',
+        'lostBall' => 'lost ball',
         _ => 'map',
       };
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Shot $shotNumber pinned ($sourceLabel) on hole $targetHole — $shotYards yds',
+            shotYards != null
+                ? 'Shot $shotNumber pinned ($sourceLabel) on hole $targetHole — $shotYards yds'
+                : 'Shot $shotNumber pinned ($sourceLabel) on hole $targetHole',
           ),
         ),
       );
@@ -1517,6 +2251,7 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
           teeLabel: shot.teeLabel,
           shotYards: shot.shotYards,
           yardsToPin: shot.yardsToPin,
+          pinType: shot.pinType,
         ),
       );
     }
@@ -1571,13 +2306,23 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
   }
 
   void _selectHole(String hole) {
+    _persistMeasurementChainForHole(_selectedHole);
     _clearDistance();
     setState(() {
       _selectedPinnedShotIndex = null;
       _selectedMeasurementPinIndex = null;
+      _enteredGreenAt = null;
+      _autoAdvanceTriggeredForHole = false;
+      _clubAimPlacementMode = false;
+      _gpsSimPlacementMode = false;
     });
     _liveActivity.resetGpsThrottle();
     _refreshHoleState(holeOverride: hole);
+    if (_gpsSimMode) {
+      _seedSimulatedGpsIfNeeded();
+    }
+    unawaited(_loadDispersionForCurrentHole());
+    unawaited(_refreshWeatherAndSuggestions());
   }
 
   void _goToNextHole() {
@@ -1588,6 +2333,13 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
   }
 
   void _handleTrackShotAction(TrackShotAction action) {
+    if (_isCurrentHoleLocked) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Unlock the hole to track more shots')),
+      );
+      return;
+    }
+
     switch (action) {
       case TrackShotAction.gps:
         _pinGpsShot();
@@ -1599,7 +2351,28 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
           setState(() => _idealLineEnabled = enabled);
           _appPrefs.setIdealLineEnabled(enabled);
         }
+      case TrackShotAction.lostBall:
+        _pinLostBall();
     }
+  }
+
+  void _pinLostBall() {
+    final point = _userCoord;
+    if (point == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('GPS not available for lost ball pin')),
+      );
+      return;
+    }
+
+    _addPinnedShot(point, 'lostBall', pinType: PinType.lostBall);
+    final course = _selectedCourse;
+    if (course == null) return;
+    setState(() {
+      final key = _scoreKey(course, _selectedHole);
+      _scores[key] = (_scores[key] ?? 0) + 1;
+    });
+    _syncLiveActivity(force: true);
   }
 
   void _openGpsToGreen() {
@@ -1721,6 +2494,7 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
 
     setState(() => _savingRound = true);
     try {
+      _lockAllHolesBeforeSave();
       final scores = <String, int>{
         for (final hole in _holes)
           hole: _scores[_scoreKey(course, hole)] ?? 0,
@@ -1737,11 +2511,9 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
         playedAt: widget.existingRoundPlayedAt ?? DateTime.now(),
         scores: scores,
         putts: putts,
-        pinnedShots: {
-          for (final entry in _pinnedShots.entries)
-            if (entry.value.isNotEmpty)
-              entry.key: List<PinnedShot>.from(entry.value),
-        },
+        pinnedShots: _pinnedShotsForSave(),
+        measurementChains: _measurementChainsForSave(),
+        lockedHoles: Set<String>.from(_lockedHoles),
       );
 
       await _roundStorage.saveRound(round);
@@ -1765,6 +2537,73 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
   Future<void> _handleSaveAndExit() async {
     final saved = await _saveRound();
     if (!mounted || !saved) return;
+
+    final course = _selectedCourse;
+    if (course != null) {
+      final offerShare = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          backgroundColor: const Color(0xFF1A1A22),
+          title: const Text('Round saved', style: TextStyle(color: Colors.white)),
+          content: const Text(
+            'Share a round recap image?',
+            style: TextStyle(color: AppTheme.textMuted),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Not now'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text(
+                'Share recap',
+                style: TextStyle(color: AppTheme.accentGreen),
+              ),
+            ),
+          ],
+        ),
+      );
+
+      if (offerShare == true && mounted) {
+        final scores = <String, int>{
+          for (final hole in _holes)
+            hole: _scores[_scoreKey(course, hole)] ?? 0,
+        };
+        final pars = <String, int>{
+          for (final hole in _holes)
+            hole: _dataService.statsForHole(_features, course, hole)?.par ?? 0,
+        };
+        final round = SavedRound(
+          id: widget.existingRoundId ??
+              DateTime.now().millisecondsSinceEpoch.toString(),
+          courseName: course,
+          playedAt: widget.existingRoundPlayedAt ?? DateTime.now(),
+          scores: scores,
+          putts: {
+            for (final hole in _holes)
+              hole: _putts[_scoreKey(course, hole)] ?? 0,
+          },
+          pinnedShots: _pinnedShotsForSave(),
+          measurementChains: _measurementChainsForSave(),
+          lockedHoles: Set<String>.from(_lockedHoles),
+        );
+        await _recapShareService.shareRoundRecap(
+          context: context,
+          round: round,
+          lines: _scorecardLines,
+          totalScore: _totalScore,
+          relativeToPar: _totalRelativeToPar,
+          longestDriveYards:
+              RoundRecapShareService.longestDrive(_pinnedShotsForSave()),
+          bestHoleLabel: RoundRecapShareService.bestHoleVsPar(
+            scores: scores,
+            pars: pars,
+          ),
+        );
+      }
+    }
+
     await _liveActivity.end();
     if (!mounted) return;
     Navigator.pop(context, true);
@@ -1863,6 +2702,116 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
     );
   }
 
+  Widget _buildMapActionPanel() {
+    return MapActionPanel(
+      holeLocked: _isCurrentHoleLocked,
+      onToggleHoleLock: _toggleHoleLock,
+      clubAimPlacementMode: _clubAimPlacementMode,
+      hasClubAimPoint: _clubAimPoint != null,
+      onToggleClubAimPlacement:
+          _isCurrentHoleLocked ? null : _toggleClubAimPlacementMode,
+      onClearClubAimPoint: _clubAimPoint != null ? _clearClubAimPoint : null,
+      gpsSimMode: _gpsSimMode,
+      gpsSimPlacementMode: _gpsSimPlacementMode,
+      onToggleGpsSimMode: _toggleGpsSimMode,
+      onToggleGpsSimPlacement: _toggleGpsSimPlacementMode,
+      showClubBagButton: _clubSuggestion == null,
+      onEditClubBag: _openClubBagEditor,
+      showMapOverlay: _mapOverlayEnabled,
+      onToggleMapOverlay: (value) {
+        setState(() => _mapOverlayEnabled = value);
+        unawaited(_appPrefs.setMapOverlayEnabled(value));
+        _wakeMapAfterCameraMove();
+      },
+      showBunkerDistancesOnMap: _showBunkerDistancesOnMap,
+      onToggleBunkerDistancesOnMap: (value) {
+        setState(() => _showBunkerDistancesOnMap = value);
+        _refreshMeasurementDisplay();
+        if (!value || !mounted) return;
+
+        final from = _bunkerReferencePoint;
+        if (from == null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Need GPS, a tee, or a tracked shot for bunker distances',
+              ),
+            ),
+          );
+          return;
+        }
+
+        final bunkers = bunkerDistancesFromPoint(from, _currentHoleFeatures);
+        if (bunkers.isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('No bunkers on this hole')),
+          );
+        }
+      },
+      showDispersion: _showDispersion,
+      onToggleDispersion: (value) {
+        setState(() => _showDispersion = value);
+        unawaited(_appPrefs.setShowShotDispersion(value));
+        if (value) {
+          unawaited(_loadDispersionForCurrentHole());
+        } else {
+          setState(() => _dispersionPoints = []);
+        }
+      },
+      autoAdvanceHole: _autoAdvanceHole,
+      onToggleAutoAdvance: (value) {
+        setState(() => _autoAdvanceHole = value);
+        unawaited(_appPrefs.setAutoAdvanceHole(value));
+      },
+      onOpenDetails: _openDistanceDetails,
+      onOpenGpsToGreen: _openGpsToGreen,
+    );
+  }
+
+  Widget _buildLeftBottomControls() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        TrackShotButton(
+          shotLineEnabled: _showIdealLine,
+          mapPinEnabled: _lockedMeasurementPoints.isNotEmpty,
+          pinnedShotCount: _currentHolePinnedShots.length,
+          onClearPins: _currentHolePinnedShots.isNotEmpty
+              ? _clearPinnedShots
+              : null,
+          onAction: _handleTrackShotAction,
+        ),
+        const SizedBox(height: 8),
+        _MapActionButton(
+          icon: Icons.zoom_out_map_rounded,
+          tooltip: 'Reset hole view',
+          onTap: _mapReady ? _resetMapToDefault : null,
+        ),
+      ],
+    );
+  }
+
+  Widget? _buildDeleteSelectedPinButton() {
+    if (_isCurrentHoleLocked) return null;
+    if (_selectedPinnedShotIndex == null &&
+        _selectedMeasurementPinIndex == null) {
+      return null;
+    }
+
+    return KeyedSubtree(
+      key: _mapDeleteButtonKey,
+      child: DeleteSelectedPinButton(
+        label: _selectedPinnedShotIndex != null
+            ? 'Delete shot pin'
+            : 'Delete shot node',
+        onTap: _selectedPinnedShotIndex != null
+            ? _deleteSelectedPinnedShot
+            : () => _deleteMeasurementPin(_selectedMeasurementPinIndex!),
+      ),
+    );
+  }
+
   Widget _buildBody() {
     return Stack(
       children: [
@@ -1880,6 +2829,9 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
             greenCenter: _greenCenter,
             shotOrigin: _shotOrigin,
             userCoord: _userCoord,
+            gpsSimMode: _gpsSimMode,
+            onUserCoordDrag: _gpsSimMode ? _setSimulatedGps : null,
+            onUserCoordDragEnd: _gpsSimMode ? _setSimulatedGps : null,
             selectedTeeFeatureId: _selectedTeeFeatureId,
             usingGpsForShot: _usingGpsForShot,
             onTap: _handleMapTap,
@@ -1904,9 +2856,14 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
             lockedMeasurementPoints: _lockedMeasurementPoints,
             greenYardages: _distanceInfo?.greenYardages,
             showGreenYardageCallout: true,
-            bunkerDistances: _showBunkerDistancesOnMap
-                ? (_distanceInfo?.bunkerDistances ?? const [])
-                : const [],
+            bunkerDistances: _mapBunkerDistances,
+            dispersionPoints: _dispersionPoints,
+            showDispersion: _showDispersion,
+            holeLocked: _isCurrentHoleLocked,
+            clubAimPoint: _clubAimPoint,
+            clubAimOrigin: _clubAimLineOrigin,
+            onClubAimDrag: _isCurrentHoleLocked ? null : _moveClubAimPoint,
+            onClubAimDragEnd: _isCurrentHoleLocked ? null : _moveClubAimPoint,
           ),
         ),
         Positioned(
@@ -1962,95 +2919,85 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
                     ),
                   ],
                 ),
-                if (_holes.isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  KeyedSubtree(
-                    key: _mapHolePickerKey,
-                    child: SidebarHolePicker(
-                      holes: _holes,
-                      selectedHole: _selectedHole,
-                      onSelectHole: _selectHole,
-                      large: true,
-                    ),
-                  ),
-                ],
               ],
             ),
           ),
           ),
         ),
+        if (_holes.isNotEmpty)
+          Positioned(
+            left: _mapEdgeInset,
+            top: _mapTopInset(context) + _mapHeaderRowHeight,
+            bottom: MediaQuery.paddingOf(context).bottom + 6,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                KeyedSubtree(
+                  key: _mapHolePickerKey,
+                  child: SidebarHolePicker(
+                    holes: _holes,
+                    selectedHole: _selectedHole,
+                    onSelectHole: _selectHole,
+                    large: true,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Expanded(
+                  child: KeyedSubtree(
+                    key: _mapLeftToolbarKey,
+                    child: SingleChildScrollView(
+                      child: _buildMapActionPanel(),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                KeyedSubtree(
+                  key: _mapLeftControlsKey,
+                  child: _buildLeftBottomControls(),
+                ),
+              ],
+            ),
+          ),
         if (_currentHoleStats != null)
           Positioned(
             top: kIsWeb ? 72 : 64,
-            right: 15,
+            right: _mapEdgeInset,
             child: KeyedSubtree(
               key: _mapSidebarKey,
               child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                HoleStatsPanel(
-                  stats: _currentHoleStats!,
-                  onNextHole: _holes.length > 1 ? _goToNextHole : null,
-                  yardage: _holeYardage,
-                  gpsGreenYardages: _gpsGreenYardages,
-                  showMapOverlay: _mapOverlayEnabled,
-                  onToggleMapOverlay: (value) {
-                    setState(() => _mapOverlayEnabled = value);
-                    unawaited(_appPrefs.setMapOverlayEnabled(value));
-                    _wakeMapAfterCameraMove();
-                  },
-                  showBunkerDistancesOnMap: _showBunkerDistancesOnMap,
-                  onToggleBunkerDistancesOnMap: (value) {
-                    setState(() => _showBunkerDistancesOnMap = value);
-                  },
-                  onOpenDetails: _openDistanceDetails,
-                  onOpenGpsToGreen: _openGpsToGreen,
-                ),
-                if (_selectedPinnedShotIndex != null) ...[
-                  const SizedBox(height: 8),
-                  _DeleteNodeButton(
-                    onTap: _deleteSelectedPinnedShot,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  HoleStatsPanel(
+                    stats: _currentHoleStats!,
+                    yardage: _holeYardage,
+                    gpsGreenYardages: _gpsGreenYardages,
+                    playsLikeYards: _playsLikeMiddle,
+                    yardsFromLastPin: _yardsFromUserToLastPin,
+                    clubSuggestion: _clubSuggestion,
+                    clubUsesAimTarget: _clubUsesAimTarget,
+                    onEditClubBag: _openClubBagEditor,
                   ),
-                ] else if (_selectedMeasurementPinIndex != null) ...[
-                  const SizedBox(height: 8),
-                  _DeleteNodeButton(
-                    onTap: () =>
-                        _deleteMeasurementPin(_selectedMeasurementPinIndex!),
-                  ),
+                  if (_holes.length > 1) ...[
+                    const SizedBox(height: 8),
+                    NextHoleButton(onTap: _goToNextHole),
+                  ],
+                  if (_buildDeleteSelectedPinButton() case final deleteButton?) ...[
+                    const SizedBox(height: 8),
+                    deleteButton,
+                  ],
                 ],
-              ],
-            ),
+              ),
             ),
           ),
         Positioned(
-          right: 15,
-          bottom: MediaQuery.paddingOf(context).bottom + 118,
-          child: _MapActionButton(
-            icon: Icons.zoom_out_map_rounded,
-            tooltip: 'Reset hole view',
-            onTap: _mapReady ? _resetMapToDefault : null,
-          ),
-        ),
-        Positioned(
-          left: 15,
-          right: 15,
+          left: _mapEdgeInset + _mapSidebarWidth + _mapChromeGap,
+          right: _mapEdgeInset + _mapSidebarWidth + _mapChromeGap,
           bottom: MediaQuery.paddingOf(context).bottom + 6,
           child: KeyedSubtree(
             key: _mapBottomBarKey,
-            child: Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              TrackShotButton(
-                shotLineEnabled: _showIdealLine,
-                mapPinEnabled: _lockedMeasurementPoints.isNotEmpty,
-                pinnedShotCount: _currentHolePinnedShots.length,
-                onClearPins: _currentHolePinnedShots.isNotEmpty
-                    ? _clearPinnedShots
-                    : null,
-                onAction: _handleTrackShotAction,
-              ),
-              const Spacer(),
-              ScorePanel(
+            child: Align(
+              alignment: Alignment.bottomRight,
+              child: ScorePanel(
                 par: _currentHoleStats?.par ?? 0,
                 currentHoleScore: _currentHoleScore,
                 currentHolePutts: _currentHolePutts,
@@ -2071,45 +3018,16 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
                 onScoreChanged: _setHoleScore,
                 onPuttsChanged: _setHolePutts,
               ),
-            ],
-          ),
+            ),
           ),
         ),
       ],
     );
   }
-}
 
-class _DeleteNodeButton extends StatelessWidget {
-  const _DeleteNodeButton({required this.onTap});
-
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: onTap,
-      child: Material(
-        color: const Color(0xE61A1A22),
-        elevation: 4,
-        shadowColor: Colors.black54,
-        shape: const CircleBorder(),
-        child: Container(
-          width: 40,
-          height: 40,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            border: Border.all(color: const Color(0xFFEF4444), width: 1.5),
-          ),
-          child: const Icon(
-            Icons.delete_outline_rounded,
-            color: Color(0xFFEF4444),
-            size: 20,
-          ),
-        ),
-      ),
-    );
+  double _mapTopInset(BuildContext context) {
+    final media = MediaQuery.of(context);
+    return (kIsWeb ? 16.0 : 8.0) + media.padding.top;
   }
 }
 

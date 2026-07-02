@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -6,12 +7,15 @@ import 'package:flutter/material.dart';
 import '../config/app_theme.dart';
 import '../models/course_catalog.dart';
 import '../models/saved_round.dart';
+import '../services/app_preferences_service.dart';
 import '../services/course_favorites_service.dart';
 import '../services/course_visit_service.dart';
 import '../services/golf_data_service.dart';
+import '../services/health_workout_service.dart';
 import '../services/round_live_activity_service.dart';
 import '../services/round_storage_service.dart';
 import '../widgets/course_catalog_list.dart';
+import 'club_bag_screen.dart';
 import 'golf_map_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -26,6 +30,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final _roundStorage = RoundStorageService();
   final _courseVisits = CourseVisitService();
   final _courseFavorites = CourseFavoritesService();
+  final _appPrefs = AppPreferencesService();
 
   List<CourseCatalogEntry> _courseCatalog = [];
   List<CommonlyVisitedEntry> _commonlyVisited = [];
@@ -33,6 +38,8 @@ class _HomeScreenState extends State<HomeScreen> {
   List<SavedRound> _savedRounds = [];
   bool _loading = true;
   String? _error;
+  bool _startHealthWorkoutWithRound = true;
+  bool _healthWorkoutAvailable = false;
 
   @override
   void initState() {
@@ -65,6 +72,12 @@ class _HomeScreenState extends State<HomeScreen> {
       final commonlyVisited =
           await _courseVisits.commonlyVisited(savedRounds: rounds);
       final favorites = await _courseFavorites.loadFavorites();
+      var startHealthWorkoutWithRound = true;
+      var healthWorkoutAvailable = false;
+      if (!kIsWeb && Platform.isIOS) {
+        startHealthWorkoutWithRound = await _appPrefs.getStartHealthWorkoutWithRound();
+        healthWorkoutAvailable = await HealthWorkoutService.instance.isAvailable();
+      }
 
       if (!mounted) return;
       setState(() {
@@ -72,6 +85,8 @@ class _HomeScreenState extends State<HomeScreen> {
         _commonlyVisited = commonlyVisited;
         _favoriteCourses = favorites;
         _savedRounds = rounds;
+        _startHealthWorkoutWithRound = startHealthWorkoutWithRound;
+        _healthWorkoutAvailable = healthWorkoutAvailable;
         _loading = false;
       });
     } catch (error) {
@@ -106,15 +121,78 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  Future<void> _openClubBag() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const ClubBagScreen()),
+    );
+  }
+
   Future<void> _startRound(String course) async {
     if (!mounted) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1A22),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: const BorderSide(color: AppTheme.panelBorder),
+        ),
+        title: const Text(
+          'Starting new round',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 17,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        content: Text(
+          'You\'re about to start a new round at $course. Continue?',
+          style: const TextStyle(
+            color: AppTheme.textMuted,
+            fontSize: 14,
+            height: 1.35,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text(
+              'Cancel',
+              style: TextStyle(color: AppTheme.textMuted),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text(
+              'Continue',
+              style: TextStyle(
+                color: AppTheme.accentGreen,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
     await Navigator.of(context).push<bool>(
       MaterialPageRoute(
-        builder: (_) => GolfMapScreen(initialCourse: course),
+        builder: (_) => GolfMapScreen(
+          initialCourse: course,
+          startHealthWorkout:
+              !kIsWeb && Platform.isIOS ? _startHealthWorkoutWithRound : null,
+        ),
       ),
     );
     await RoundLiveActivityService.instance.end();
     if (mounted) _load();
+  }
+
+  Future<void> _setStartHealthWorkoutWithRound(bool value) async {
+    setState(() => _startHealthWorkoutWithRound = value);
+    await _appPrefs.setStartHealthWorkoutWithRound(value);
   }
 
   Future<void> _openRound(SavedRound round) async {
@@ -126,6 +204,8 @@ class _HomeScreenState extends State<HomeScreen> {
           initialScores: round.scores,
           initialPutts: round.putts,
           initialPinnedShots: round.pinnedShots,
+          initialMeasurementChains: round.measurementChains,
+          initialLockedHoles: round.lockedHoles,
           existingRoundId: round.id,
           existingRoundPlayedAt: round.playedAt,
         ),
@@ -263,6 +343,20 @@ class _HomeScreenState extends State<HomeScreen> {
               onToggleFavorite: _toggleFavorite,
             ),
           ],
+          _HomeActionCard(
+            icon: Icons.golf_course_rounded,
+            title: 'My club bag',
+            subtitle: 'Set carry distances for club suggestions on the course',
+            onTap: _openClubBag,
+          ),
+          if (!kIsWeb && Platform.isIOS && _healthWorkoutAvailable) ...[
+            const SizedBox(height: 12),
+            _HealthWorkoutRoundToggle(
+              value: _startHealthWorkoutWithRound,
+              onChanged: _setStartHealthWorkoutWithRound,
+            ),
+          ],
+          const SizedBox(height: 20),
           const _SectionTitle(title: 'Start a round'),
           const SizedBox(height: 10),
           CourseCatalogList(
@@ -291,6 +385,137 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+class _HealthWorkoutRoundToggle extends StatelessWidget {
+  const _HealthWorkoutRoundToggle({
+    required this.value,
+    required this.onChanged,
+  });
+
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: AppTheme.panelBg,
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: AppTheme.panelBorder),
+        ),
+        child: Row(
+          children: [
+            const Icon(
+              Icons.favorite_rounded,
+              color: Color(0xFFFF5252),
+              size: 28,
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Apple Health workout',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    value
+                        ? 'Track this round as a golf workout in Apple Health'
+                        : 'Workout tracking off for new rounds',
+                    style: const TextStyle(
+                      color: AppTheme.textMuted,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Switch.adaptive(
+              value: value,
+              activeThumbColor: AppTheme.accentGreen,
+              onChanged: onChanged,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _HomeActionCard extends StatelessWidget {
+  const _HomeActionCard({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: AppTheme.panelBg,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: AppTheme.panelBorder),
+          ),
+          child: Row(
+            children: [
+              Icon(icon, color: AppTheme.accentGreen, size: 28),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      subtitle,
+                      style: const TextStyle(
+                        color: AppTheme.textMuted,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(
+                Icons.chevron_right_rounded,
+                color: AppTheme.textMuted,
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

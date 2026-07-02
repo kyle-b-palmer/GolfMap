@@ -45,6 +45,7 @@ dependencies:
   share_plus: ^13.1.0
   live_activities: ^2.4.9
   apple_maps_flutter: ^1.4.0
+  http: ^1.2.2
 
 dev_dependencies:
   flutter_test:

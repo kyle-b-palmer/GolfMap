@@ -3,8 +3,12 @@ import UIKit
 
 final class LiveActivityBridge: NSObject, FlutterPlugin, FlutterStreamHandler {
     private static var foregroundSink: FlutterEventSink?
+    private static var didRegister = false
 
     static func register(with registrar: FlutterPluginRegistrar) {
+        guard !didRegister else { return }
+        didRegister = true
+
         let channel = FlutterMethodChannel(
             name: "com.golfmapapp/live_activity_round",
             binaryMessenger: registrar.messenger()
@@ -40,12 +44,14 @@ final class LiveActivityBridge: NSObject, FlutterPlugin, FlutterStreamHandler {
         switch call.method {
         case "supportsInteractiveControls":
             result(GolfRoundLiveActivitySupport.interactiveControlsAvailable)
+        case "supportsSharedRoundState":
+            result(GolfRoundLiveActivitySupport.sharedRoundStateAvailable)
         case "syncRoundState":
             guard let args = call.arguments as? [String: Any],
                   let holes = args["holes"] as? [String],
                   let selectedHole = args["selectedHole"] as? String,
                   let courseName = args["courseName"] as? String,
-                  let revision = args["revision"] as? Int else {
+                  let revision = Self.intValue(args["revision"]) else {
                 result(FlutterError(code: "bad_args", message: "Invalid round state", details: nil))
                 return
             }
@@ -53,9 +59,10 @@ final class LiveActivityBridge: NSObject, FlutterPlugin, FlutterStreamHandler {
             let putts = intMap(from: args["putts"])
             let pars = intMap(from: args["pars"])
             let handicaps = intMap(from: args["handicaps"])
-            let yardsToGreen = args["yardsToGreen"] as? Int ?? -1
-            let greenLatitude = args["greenLatitude"] as? Double ?? 0
-            let greenLongitude = args["greenLongitude"] as? Double ?? 0
+            let yardsToGreen = Self.intValue(args["yardsToGreen"]) ?? -1
+            let greenLatitude = Self.doubleValue(args["greenLatitude"]) ?? 0
+            let greenLongitude = Self.doubleValue(args["greenLongitude"]) ?? 0
+            let sessionId = args["sessionId"] as? String ?? ""
             GolfRoundLiveActivityController.shared.syncFromFlutter(
                 holes: holes,
                 selectedHole: selectedHole,
@@ -67,7 +74,8 @@ final class LiveActivityBridge: NSObject, FlutterPlugin, FlutterStreamHandler {
                 yardsToGreen: yardsToGreen,
                 revision: revision,
                 greenLatitude: greenLatitude,
-                greenLongitude: greenLongitude
+                greenLongitude: greenLongitude,
+                sessionId: sessionId
             )
             WatchConnectivityBridge.shared.pushRoundStateIfNeeded()
             result(nil)
@@ -76,8 +84,8 @@ final class LiveActivityBridge: NSObject, FlutterPlugin, FlutterStreamHandler {
                 result(FlutterError(code: "bad_args", message: "Invalid green target", details: nil))
                 return
             }
-            let greenLatitude = args["greenLatitude"] as? Double ?? 0
-            let greenLongitude = args["greenLongitude"] as? Double ?? 0
+            let greenLatitude = Self.doubleValue(args["greenLatitude"]) ?? 0
+            let greenLongitude = Self.doubleValue(args["greenLongitude"]) ?? 0
             GolfRoundLiveActivityController.shared.updateGreenTarget(
                 greenLatitude: greenLatitude,
                 greenLongitude: greenLongitude
@@ -94,7 +102,9 @@ final class LiveActivityBridge: NSObject, FlutterPlugin, FlutterStreamHandler {
                 "gpsRefreshRevision": state.gpsRefreshRevision,
             ])
         case "consumeWidgetChanges":
-            let lastRevision = (call.arguments as? [String: Any])?["revision"] as? Int ?? 0
+            let lastRevision = Self.intValue(
+                (call.arguments as? [String: Any])?["revision"]
+            ) ?? 0
             guard let state = GolfRoundLiveActivityController.shared.consumeChanges(after: lastRevision) else {
                 result(nil)
                 return
@@ -110,6 +120,7 @@ final class LiveActivityBridge: NSObject, FlutterPlugin, FlutterStreamHandler {
                         "hole": pin.hole,
                         "latitude": pin.latitude,
                         "longitude": pin.longitude,
+                        "pinKind": pin.pinKind as Any,
                     ]
                 },
                 "pendingGpsPinUndos": state.pendingGpsPinUndos.map { pin in
@@ -117,6 +128,7 @@ final class LiveActivityBridge: NSObject, FlutterPlugin, FlutterStreamHandler {
                         "hole": pin.hole,
                         "latitude": pin.latitude,
                         "longitude": pin.longitude,
+                        "pinKind": pin.pinKind as Any,
                     ]
                 },
             ])
@@ -149,8 +161,16 @@ final class LiveActivityBridge: NSObject, FlutterPlugin, FlutterStreamHandler {
         case "getSharedRevision":
             result(GolfRoundLiveActivityController.shared.loadState()?.revision ?? 0)
         case "clearSharedState":
+            let args = call.arguments as? [String: Any]
+            let sessionId = args?["sessionId"] as? String ?? ""
+            let notifyWatch = args?["notifyWatch"] as? Bool ?? true
+            if !sessionId.isEmpty {
+                GolfRoundLiveActivityController.shared.setActiveSessionId(sessionId)
+            }
             GolfRoundLiveActivityController.shared.clearSharedState()
-            WatchConnectivityBridge.shared.pushRoundStateIfNeeded()
+            if notifyWatch {
+                WatchConnectivityBridge.shared.pushSessionReset(sessionId: sessionId)
+            }
             result(nil)
         default:
             result(FlutterMethodNotImplemented)
@@ -168,5 +188,25 @@ final class LiveActivityBridge: NSObject, FlutterPlugin, FlutterStreamHandler {
             }
         }
         return mapped
+    }
+
+    private static func intValue(_ value: Any?) -> Int? {
+        if let value = value as? Int {
+            return value
+        }
+        if let value = value as? NSNumber {
+            return value.intValue
+        }
+        return nil
+    }
+
+    private static func doubleValue(_ value: Any?) -> Double? {
+        if let value = value as? Double {
+            return value
+        }
+        if let value = value as? NSNumber {
+            return value.doubleValue
+        }
+        return nil
     }
 }

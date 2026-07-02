@@ -10,11 +10,13 @@ class LiveActivityGpsPin {
     required this.hole,
     required this.latitude,
     required this.longitude,
+    this.pinKind,
   });
 
   final String hole;
   final double latitude;
   final double longitude;
+  final String? pinKind;
 }
 
 class SharedGpsYardage {
@@ -64,6 +66,7 @@ class RoundLiveActivityService {
   int? _lastYardsToGreen;
   String? _lastSyncedHole;
   int _session = 0;
+  String _roundSessionId = '';
   String? _runningActivityId;
   Future<void> _operationLock = Future.value();
   int _interactiveRevision = 0;
@@ -72,6 +75,7 @@ class RoundLiveActivityService {
 
   bool get isSupported => Platform.isIOS;
   int get session => _session;
+  String get roundSessionId => _roundSessionId;
   int get interactiveRevision => _interactiveRevision;
 
   Stream<String> get stateChangeStream => _foregroundEvents
@@ -95,9 +99,11 @@ class RoundLiveActivityService {
     return _withLock(() async {
       await init();
       _interactiveRevision = 0;
-      await _clearSharedRoundState();
-      await _endActivities();
       _session++;
+      _roundSessionId =
+          '${DateTime.now().millisecondsSinceEpoch}_$_session';
+      await _clearSharedRoundState(notifyWatch: false);
+      await _endActivities();
       return _session;
     });
   }
@@ -116,6 +122,16 @@ class RoundLiveActivityService {
     return _interactiveSupported!;
   }
 
+  Future<bool> supportsSharedRoundState() async {
+    if (!isSupported) return false;
+    try {
+      final value = await _bridge.invokeMethod<bool>('supportsSharedRoundState');
+      return value ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<void> syncInteractiveRoundState({
     required List<String> holes,
     required String selectedHole,
@@ -128,9 +144,10 @@ class RoundLiveActivityService {
     double? greenLatitude,
     double? greenLongitude,
     int? revision,
+    String? sessionId,
   }) async {
     if (!isSupported) return;
-    if (!await supportsInteractiveControls()) return;
+    if (!await supportsSharedRoundState()) return;
 
     final nextRevision = revision ?? await _nextInteractiveRevision();
 
@@ -153,6 +170,7 @@ class RoundLiveActivityService {
         'greenLatitude': greenLatitude ?? 0,
         'greenLongitude': greenLongitude ?? 0,
         'revision': nextRevision,
+        'sessionId': sessionId ?? _roundSessionId,
       });
       await pushWatchRoundState();
     } catch (_) {
@@ -179,7 +197,7 @@ class RoundLiveActivityService {
 
   Future<LiveActivityWidgetChanges?> consumeWidgetChanges() async {
     if (!isSupported) return null;
-    if (!await supportsInteractiveControls()) return null;
+    if (!await supportsSharedRoundState()) return null;
 
     try {
       final result = await _bridge.invokeMethod<Object?>('consumeWidgetChanges', {
@@ -230,6 +248,7 @@ class RoundLiveActivityService {
                 hole: hole,
                 latitude: latitude.toDouble(),
                 longitude: longitude.toDouble(),
+                pinKind: item['pinKind'] as String?,
               ),
             );
           }
@@ -303,7 +322,7 @@ class RoundLiveActivityService {
     required Map<String, int> scores,
   }) async {
     if (!isSupported) return;
-    if (!await supportsInteractiveControls()) return;
+    if (!await supportsSharedRoundState()) return;
 
     try {
       await _bridge.invokeMethod<void>('reportPinnedShotRemoved', {
@@ -469,16 +488,21 @@ class RoundLiveActivityService {
     if (!isSupported || !_initialized) return;
     await _withLock(() async {
       _session++;
+      _roundSessionId =
+          '${DateTime.now().millisecondsSinceEpoch}_$_session';
       _interactiveRevision = 0;
       await _clearSharedRoundState();
       await _endActivities();
     });
   }
 
-  Future<void> _clearSharedRoundState() async {
+  Future<void> _clearSharedRoundState({bool notifyWatch = true}) async {
     if (!isSupported) return;
     try {
-      await _bridge.invokeMethod<void>('clearSharedState');
+      await _bridge.invokeMethod<void>('clearSharedState', {
+        'sessionId': _roundSessionId,
+        'notifyWatch': notifyWatch,
+      });
     } catch (_) {}
   }
 

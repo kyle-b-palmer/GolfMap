@@ -34,6 +34,10 @@
 	<string>South Texas Golf Tracker updates live yardage on your lock screen while you play a round.</string>
 	<key>NSLocationAlwaysUsageDescription</key>
 	<string>South Texas Golf Tracker updates live yardage on your lock screen while you play a round.</string>
+	<key>NSHealthShareUsageDescription</key>
+	<string>South Texas Golf Tracker saves your golf round as an Apple Health workout.</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>South Texas Golf Tracker records golf workouts in Apple Health.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>location</string>

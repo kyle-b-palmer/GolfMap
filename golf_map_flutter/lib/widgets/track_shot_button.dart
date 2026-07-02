@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../config/app_theme.dart';
 
-enum TrackShotAction { gps, mapPin, shotLine }
+enum TrackShotAction { gps, mapPin, shotLine, lostBall }
 
 class TrackShotButton extends StatefulWidget {
   const TrackShotButton({
@@ -130,6 +130,13 @@ class _TrackShotButtonState extends State<TrackShotButton> {
                   label: 'Shot Line',
                   active: widget.shotLineEnabled,
                   onTap: () => _select(TrackShotAction.shotLine),
+                ),
+                const Divider(height: 1, color: AppTheme.panelBorder),
+                _TrackShotMenuItem(
+                  icon: Icons.cancel_outlined,
+                  label: 'Lost ball (+1)',
+                  accentColor: const Color(0xFFEF4444),
+                  onTap: () => _select(TrackShotAction.lostBall),
                 ),
                 if (widget.pinnedShotCount > 0 &&
                     widget.onClearPins != null) ...[

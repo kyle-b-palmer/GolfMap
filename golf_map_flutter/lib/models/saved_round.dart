@@ -1,3 +1,4 @@
+import 'measurement_chain.dart';
 import 'pinned_shot.dart';
 
 class SavedRound {
@@ -8,8 +9,12 @@ class SavedRound {
     required this.scores,
     Map<String, int>? putts,
     Map<String, List<PinnedShot>>? pinnedShots,
+    Map<String, List<MeasurementChainPoint>>? measurementChains,
+    Set<String>? lockedHoles,
   })  : putts = putts ?? const {},
-        pinnedShots = pinnedShots ?? const {};
+        pinnedShots = pinnedShots ?? const {},
+        measurementChains = measurementChains ?? const {},
+        lockedHoles = lockedHoles ?? const {};
 
   final String id;
   final String courseName;
@@ -17,6 +22,8 @@ class SavedRound {
   final Map<String, int> scores;
   final Map<String, int> putts;
   final Map<String, List<PinnedShot>> pinnedShots;
+  final Map<String, List<MeasurementChainPoint>> measurementChains;
+  final Set<String> lockedHoles;
 
   int get totalStrokes =>
       scores.values.fold<int>(0, (sum, strokes) => sum + strokes);
@@ -31,6 +38,10 @@ class SavedRound {
     var total = 0;
     for (final shots in pinnedShots.values) {
       total += shots.length;
+    }
+    if (total > 0) return total;
+    for (final chain in measurementChains.values) {
+      total += chain.length;
     }
     return total;
   }
@@ -56,14 +67,69 @@ class SavedRound {
       });
     }
 
+    final pinnedShots = _parsePinnedShots(json['pinnedShots']);
+    final measurementChains = _parseMeasurementChains(json['measurementChains']);
+
     return SavedRound(
       id: json['id'] as String,
       courseName: json['courseName'] as String,
       playedAt: DateTime.parse(json['playedAt'] as String),
       scores: scores,
       putts: putts,
-      pinnedShots: _parsePinnedShots(json['pinnedShots']),
+      pinnedShots: pinnedShots,
+      measurementChains: measurementChains,
+      lockedHoles: _parseLockedHoles(
+        json['lockedHoles'],
+        pinnedShots: pinnedShots,
+        measurementChains: measurementChains,
+        scoreHoles: scores.keys,
+      ),
     );
+  }
+
+  static Set<String> _parseLockedHoles(
+    dynamic raw, {
+    required Map<String, List<PinnedShot>> pinnedShots,
+    required Map<String, List<MeasurementChainPoint>> measurementChains,
+    required Iterable<String> scoreHoles,
+  }) {
+    if (raw is List) {
+      return raw.map((hole) => hole.toString()).toSet();
+    }
+
+    // Older saves: treat holes with tracked shots as locked.
+    final legacy = <String>{
+      ...pinnedShots.keys,
+      ...measurementChains.keys,
+    };
+    if (legacy.isNotEmpty) return legacy;
+    return scoreHoles.toSet();
+  }
+
+  static Map<String, List<MeasurementChainPoint>> _parseMeasurementChains(
+    dynamic raw,
+  ) {
+    if (raw == null || raw is! Map) return {};
+
+    final result = <String, List<MeasurementChainPoint>>{};
+    raw.forEach((hole, points) {
+      if (points is! List) return;
+
+      final parsed = <MeasurementChainPoint>[];
+      for (final item in points) {
+        if (item is! Map) continue;
+        try {
+          parsed.add(
+            MeasurementChainPoint.fromJson(Map<String, dynamic>.from(item)),
+          );
+        } catch (_) {
+          // Skip malformed chain entries from older saves.
+        }
+      }
+      parsed.sort((a, b) => a.shotNumber.compareTo(b.shotNumber));
+      result[hole.toString()] = parsed;
+    });
+    return result;
   }
 
   static Map<String, List<PinnedShot>> _parsePinnedShots(dynamic raw) {
@@ -102,5 +168,12 @@ class SavedRound {
             shots.map((s) => s.toJson()).toList(),
           ),
         ),
+        'measurementChains': measurementChains.map(
+          (hole, points) => MapEntry(
+            hole,
+            points.map((p) => p.toJson()).toList(),
+          ),
+        ),
+        'lockedHoles': lockedHoles.toList()..sort(),
       };
 }

@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import WatchKit
+import WidgetKit
 
 @MainActor
 final class GolfRoundWatchViewModel: ObservableObject {
@@ -11,7 +12,7 @@ final class GolfRoundWatchViewModel: ObservableObject {
 
     private var timer: Timer?
     private var cancellables = Set<AnyCancellable>()
-    private var swingDetectionRoundKey = ""
+    private var swingDetectionSessionId = ""
     private var isHandlingSwing = false
 
     init() {
@@ -51,6 +52,7 @@ final class GolfRoundWatchViewModel: ObservableObject {
     }
 
     func reload() {
+        _ = GolfRoundWatchStore.shared.reconcilePhoneAppGroupState()
         _ = GolfRoundWatchStore.shared.reconcileFromPhoneContext()
         WatchConnectivityClient.shared.requestPhoneRoundStateIfNeeded()
 
@@ -61,9 +63,13 @@ final class GolfRoundWatchViewModel: ObservableObject {
                 latitude: loaded.greenLatitude,
                 longitude: loaded.greenLongitude
             )
-        }
-        if yardsToGreen == nil {
-            yardsToGreen = loaded?.yardsToGreen
+            yardsToGreen = loaded.yardsToGreen
+            GolfRoundWidgetSnapshot.save(from: loaded, yardsToGreen: yardsToGreen)
+            WidgetCenter.shared.reloadAllTimelines()
+        } else {
+            yardsToGreen = nil
+            GolfRoundWidgetSnapshot.clear()
+            WidgetCenter.shared.reloadAllTimelines()
         }
         updateSwingDetection(for: loaded)
         refreshUndoAvailability()
@@ -123,6 +129,51 @@ final class GolfRoundWatchViewModel: ObservableObject {
         }
     }
 
+    func recordLostBall() {
+        guard !isPinningLocation else { return }
+        guard let current = state, current.isActiveRound else { return }
+
+        isPinningLocation = true
+        Task {
+            defer { isPinningLocation = false }
+
+            guard let location = await WatchLocationManager.shared.requestFreshLocation() else {
+                return
+            }
+
+            guard let updated = GolfRoundWatchStore.shared.recordLostBall(
+                hole: current.selectedHole,
+                latitude: location.coordinate.latitude,
+                longitude: location.coordinate.longitude
+            ) else {
+                return
+            }
+
+            WKInterfaceDevice.current().play(.notification)
+            state = updated
+            WatchConnectivityClient.shared.sendStateChange(updated)
+        }
+    }
+
+    var isPuttMode: Bool {
+        guard let yards = yardsToGreen else { return false }
+        return yards >= 0 && yards <= 45
+    }
+
+    func incrementPutts() {
+        guard let current = state else { return }
+        let hole = current.selectedHole
+        let next = min(9, (current.putts[hole] ?? 0) + 1)
+        applyScoreChange(GolfRoundWatchStore.shared.setCurrentHolePutts(to: next))
+    }
+
+    func decrementPutts() {
+        guard let current = state else { return }
+        let hole = current.selectedHole
+        let next = max(0, (current.putts[hole] ?? 0) - 1)
+        applyScoreChange(GolfRoundWatchStore.shared.setCurrentHolePutts(to: next))
+    }
+
     func nextHole() {
         guard let updated = GolfRoundWatchStore.shared.advanceHole() else { return }
         state = updated
@@ -155,11 +206,11 @@ final class GolfRoundWatchViewModel: ObservableObject {
             return
         }
 
-        let roundKey = loaded.courseName
-        if !swingDetectionRoundKey.isEmpty && roundKey != swingDetectionRoundKey {
+        let sessionKey = loaded.sessionId.isEmpty ? loaded.courseName : loaded.sessionId
+        if !swingDetectionSessionId.isEmpty && sessionKey != swingDetectionSessionId {
             GolfRoundWatchStore.shared.clearAcceptedSwingPins()
         }
-        swingDetectionRoundKey = roundKey
+        swingDetectionSessionId = sessionKey
 
         WatchRoundRuntimeSession.shared.startIfNeeded()
         SwingDetector.shared.start { [weak self] in
@@ -171,7 +222,7 @@ final class GolfRoundWatchViewModel: ObservableObject {
 
     private func stopSwingDetection() {
         SwingDetector.shared.stop()
-        swingDetectionRoundKey = ""
+        swingDetectionSessionId = ""
         isHandlingSwing = false
         canUndoLastSwing = false
     }

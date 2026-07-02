@@ -1,3 +1,5 @@
+import 'pin_type.dart';
+
 class PinnedShot {
   const PinnedShot({
     required this.shotNumber,
@@ -8,6 +10,7 @@ class PinnedShot {
     this.teeLabel,
     this.shotYards,
     this.yardsToPin,
+    this.pinType = PinType.shot,
   });
 
   final int shotNumber;
@@ -19,6 +22,7 @@ class PinnedShot {
   /// Distance of this shot segment (from tee or previous pin).
   final int? shotYards;
   final int? yardsToPin;
+  final PinType pinType;
 
   factory PinnedShot.fromJson(Map<String, dynamic> json) {
     final lat = (json['latitude'] as num).toDouble();
@@ -33,6 +37,7 @@ class PinnedShot {
       shotYards: (json['shotYards'] as num?)?.toInt() ??
           (json['yardsFromTee'] as num?)?.toInt(),
       yardsToPin: (json['yardsToPin'] as num?)?.toInt(),
+      pinType: PinType.fromJson(json['pinType'] as String?),
     );
   }
 
@@ -45,5 +50,6 @@ class PinnedShot {
         if (teeLabel != null) 'teeLabel': teeLabel,
         if (shotYards != null) 'shotYards': shotYards,
         if (yardsToPin != null) 'yardsToPin': yardsToPin,
+        if (pinType != PinType.shot) 'pinType': pinType.toJson(),
       };
 }

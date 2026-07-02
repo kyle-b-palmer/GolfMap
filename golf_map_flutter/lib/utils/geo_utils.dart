@@ -707,10 +707,17 @@ GreenYardages greenDistancesFromPoint(
 }
 
 double _distanceToFeatureEdgeMeters(LatLng from, Map<String, dynamic> geometry) {
+  final rings = ringsFromGeometry(geometry);
+  if (rings.isEmpty) {
+    final point = latLngFromGeometry(geometry);
+    if (point == null) return double.infinity;
+    return distanceMeters(from, point);
+  }
+
   final fromPoint = _pointFromLatLng(from);
   var minMeters = double.infinity;
 
-  for (final ring in ringsFromGeometry(geometry)) {
+  for (final ring in rings) {
     if (ring.length < 2) continue;
     final limit = ring.length > 1 && ring.first == ring.last
         ? ring.length - 1
@@ -759,6 +766,18 @@ double _signedDistanceToBunkerEdgeMeters(
   return along >= 0 ? edgeMeters : -edgeMeters;
 }
 
+LatLng? representativePointForFeature(GolfFeature feature) {
+  final fromGeometry = latLngFromGeometry(feature.geometry);
+  if (fromGeometry != null) return fromGeometry;
+
+  final points = allPointsFromGeometry(feature.geometry);
+  if (points.isEmpty) return null;
+
+  final avgLat = points.map((p) => p.latitude).reduce((a, b) => a + b) / points.length;
+  final avgLng = points.map((p) => p.longitude).reduce((a, b) => a + b) / points.length;
+  return LatLng(avgLat, avgLng);
+}
+
 List<BunkerDistance> bunkerDistancesFromPoint(
   LatLng from,
   List<GolfFeature> holeFeatures,
@@ -781,7 +800,7 @@ List<BunkerDistance> bunkerDistancesFromPoint(
       BunkerDistance(
         label: label,
         yards: metersToYardsSigned(meters),
-        point: latLngFromGeometry(bunker.geometry),
+        point: representativePointForFeature(bunker),
       ),
     );
   }
@@ -887,6 +906,21 @@ int? holeYardageFromSelectedTee(
   return metersToYards(distanceMeters(teePoint, greenCenter));
 }
 
+/// True when [user] is inside a tee box polygon or within ~25 yds of a tee marker.
+bool isUserOnTeeBox(LatLng user, List<GolfFeature> holeFeatures) {
+  for (final feature in holeFeatures.where((f) => f.featureType == 'tee')) {
+    if (isPointInGolfFeature(user, feature)) return true;
+  }
+
+  const teeRadiusYards = 25.0;
+  for (final option in teeOptionsForHole(holeFeatures)) {
+    if (metersToYards(distanceMeters(user, option.point)) <= teeRadiusYards) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /// Shot distance only makes sense when the device is on/near the hole.
 bool isUserNearHole(
   LatLng user,
@@ -910,14 +944,12 @@ int? shotDistanceYards(
   LatLng? user,
   LatLng tap,
   List<GolfFeature> holeFeatures, {
-  dynamic selectedTeeFeatureId,
   String? course,
   String? hole,
 }) {
   final origin = shotDistanceOrigin(
     user,
     holeFeatures,
-    selectedTeeFeatureId: selectedTeeFeatureId,
     course: course,
     hole: hole,
   );
@@ -928,23 +960,11 @@ int? shotDistanceYards(
 LatLng? shotDistanceOrigin(
   LatLng? user,
   List<GolfFeature> holeFeatures, {
-  dynamic selectedTeeFeatureId,
   String? course,
   String? hole,
 }) {
-  final useGps = user != null &&
-      (course != null && hole != null
-          ? isGpsWithinHolePlayArea(user, holeFeatures, course, hole)
-          : isUserNearHole(user, holeFeatures));
-
-  if (useGps) return user;
-
-  if (selectedTeeFeatureId != null) {
-    final selected = teePointById(holeFeatures, selectedTeeFeatureId);
-    if (selected != null) return selected;
-  }
-
-  return longestTeeForHole(holeFeatures);
+  if (user == null) return null;
+  return isUserNearHole(user, holeFeatures) ? user : null;
 }
 
 bool isUsingGpsForShot(
@@ -954,9 +974,6 @@ bool isUsingGpsForShot(
   String? hole,
 }) {
   if (user == null) return false;
-  if (course != null && hole != null) {
-    return isGpsWithinHolePlayArea(user, holeFeatures, course, hole);
-  }
   return isUserNearHole(user, holeFeatures);
 }
 
@@ -969,12 +986,17 @@ class PlannedShotSegment {
     required this.from,
     required this.to,
     required this.yards,
+    this.carryYards,
+    this.carryPoint,
   });
 
   final int shotNumber;
   final LatLng from;
   final LatLng to;
   final int yards;
+  /// Estimated carry distance (vs total segment including roll).
+  final int? carryYards;
+  final LatLng? carryPoint;
 }
 
 LatLng destinationFromBearing(LatLng from, double bearingDeg, double meters) {
@@ -1163,12 +1185,20 @@ List<PlannedShotSegment> plannedShotSegments({
     final yards = metersToYards(distanceMeters(current, target));
     if (segments.isNotEmpty && yards < 18) break;
 
+    final bearing = bearingBetween(current, target);
+    final carryRatio = shotNumber == 1 ? 0.88 : 0.85;
+    final carryMeters = distanceMeters(current, target) * carryRatio;
+    final carryPoint = destinationFromBearing(current, bearing, carryMeters);
+    final carryYards = metersToYards(carryMeters);
+
     segments.add(
       PlannedShotSegment(
         shotNumber: shotNumber++,
         from: current,
         to: target,
         yards: yards,
+        carryYards: carryYards,
+        carryPoint: carryPoint,
       ),
     );
 

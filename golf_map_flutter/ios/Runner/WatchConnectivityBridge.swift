@@ -35,6 +35,8 @@ final class WatchConnectivityBridge: NSObject, WCSessionDelegate {
 
         if session.isReachable {
             session.sendMessage(payload, replyHandler: nil, errorHandler: nil)
+        } else {
+            session.transferUserInfo(payload)
         }
     }
 
@@ -42,8 +44,31 @@ final class WatchConnectivityBridge: NSObject, WCSessionDelegate {
         [
             "type": "roundState",
             "revision": state.revision,
+            "sessionId": state.sessionId,
             "state": dictionary(from: state),
         ]
+    }
+
+    func pushSessionReset(sessionId: String) {
+        guard WCSession.isSupported() else { return }
+
+        let session = WCSession.default
+        guard session.activationState == .activated else { return }
+
+        let payload: [String: Any] = [
+            "type": "sessionReset",
+            "sessionId": sessionId,
+        ]
+
+        do {
+            try session.updateApplicationContext(payload)
+        } catch {
+            // Context update can fail if unchanged; fall through to message.
+        }
+
+        if session.isReachable {
+            session.sendMessage(payload, replyHandler: nil, errorHandler: nil)
+        }
     }
 
     private func dictionary(from state: GolfRoundSharedState) -> [String: Any] {
@@ -56,6 +81,18 @@ final class WatchConnectivityBridge: NSObject, WCSessionDelegate {
     }
 
     private func applyWatchPayload(_ payload: [String: Any]) {
+        if payload["type"] as? String == "sessionReset" {
+            let sessionId = payload["sessionId"] as? String ?? ""
+            if !sessionId.isEmpty {
+                if let current = GolfRoundLiveActivityController.shared.loadState(),
+                   current.sessionId == sessionId {
+                    return
+                }
+            }
+            GolfRoundLiveActivityController.shared.clearSharedState()
+            return
+        }
+
         guard let nested = payload["state"] as? [String: Any],
               JSONSerialization.isValidJSONObject(nested),
               let data = try? JSONSerialization.data(withJSONObject: nested),
@@ -64,6 +101,12 @@ final class WatchConnectivityBridge: NSObject, WCSessionDelegate {
         }
 
         if let current = GolfRoundLiveActivityController.shared.loadState() {
+            if !incoming.sessionId.isEmpty,
+               !current.sessionId.isEmpty,
+               incoming.sessionId != current.sessionId {
+                return
+            }
+
             let hasPins = !incoming.pendingGpsPins.isEmpty
             let hasUndos = !incoming.pendingGpsPinUndos.isEmpty
             let hasScoreChanges =
@@ -122,6 +165,14 @@ final class WatchConnectivityBridge: NSObject, WCSessionDelegate {
         }
 
         guard !incoming.holes.isEmpty, !incoming.courseName.isEmpty else { return }
+
+        let activeSession = GolfRoundLiveActivityController.shared.activeSessionId()
+        if !activeSession.isEmpty,
+           !incoming.sessionId.isEmpty,
+           incoming.sessionId != activeSession {
+            return
+        }
+
         GolfRoundLiveActivityController.shared.saveState(incoming)
         publishWatchMerge(incoming)
     }

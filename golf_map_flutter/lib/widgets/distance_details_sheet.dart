@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../config/app_theme.dart';
 import '../models/golf_feature.dart';
+import '../models/health_workout_mode.dart';
 import '../utils/geo_utils.dart';
 import 'distance_card.dart';
 
@@ -24,6 +25,8 @@ class DistanceDetailsSheet extends StatefulWidget {
     this.onDeleteSelectedPin,
     this.showScoreTarget = true,
     this.onShowScoreTargetChanged,
+    this.healthWorkoutMode,
+    this.onHealthWorkoutModeChanged,
   });
 
   final String courseName;
@@ -40,6 +43,8 @@ class DistanceDetailsSheet extends StatefulWidget {
   final VoidCallback? onDeleteSelectedPin;
   final bool showScoreTarget;
   final ValueChanged<bool>? onShowScoreTargetChanged;
+  final HealthWorkoutMode? healthWorkoutMode;
+  final ValueChanged<HealthWorkoutMode>? onHealthWorkoutModeChanged;
 
   static Future<void> show(
     BuildContext context, {
@@ -57,6 +62,8 @@ class DistanceDetailsSheet extends StatefulWidget {
     VoidCallback? onDeleteSelectedPin,
     bool showScoreTarget = true,
     ValueChanged<bool>? onShowScoreTargetChanged,
+    HealthWorkoutMode? healthWorkoutMode,
+    ValueChanged<HealthWorkoutMode>? onHealthWorkoutModeChanged,
   }) {
     return showModalBottomSheet<void>(
       context: context,
@@ -85,6 +92,8 @@ class DistanceDetailsSheet extends StatefulWidget {
           onDeleteSelectedPin: onDeleteSelectedPin,
           showScoreTarget: showScoreTarget,
           onShowScoreTargetChanged: onShowScoreTargetChanged,
+          healthWorkoutMode: healthWorkoutMode,
+          onHealthWorkoutModeChanged: onHealthWorkoutModeChanged,
         ),
       ),
     );
@@ -97,11 +106,14 @@ class DistanceDetailsSheet extends StatefulWidget {
 class _DistanceDetailsSheetState extends State<DistanceDetailsSheet> {
   _DistanceTab _tab = _DistanceTab.yardage;
   late bool _showScoreTarget;
+  late HealthWorkoutMode _healthWorkoutMode;
 
   @override
   void initState() {
     super.initState();
     _showScoreTarget = widget.showScoreTarget;
+    _healthWorkoutMode =
+        widget.healthWorkoutMode ?? HealthWorkoutMode.always;
   }
 
   @override
@@ -110,11 +122,20 @@ class _DistanceDetailsSheetState extends State<DistanceDetailsSheet> {
     if (oldWidget.showScoreTarget != widget.showScoreTarget) {
       _showScoreTarget = widget.showScoreTarget;
     }
+    if (oldWidget.healthWorkoutMode != widget.healthWorkoutMode &&
+        widget.healthWorkoutMode != null) {
+      _healthWorkoutMode = widget.healthWorkoutMode!;
+    }
   }
 
   void _onScoreTargetToggled(bool value) {
     setState(() => _showScoreTarget = value);
     widget.onShowScoreTargetChanged?.call(value);
+  }
+
+  void _onHealthWorkoutModeSelected(HealthWorkoutMode mode) {
+    setState(() => _healthWorkoutMode = mode);
+    widget.onHealthWorkoutModeChanged?.call(mode);
   }
 
   @override
@@ -216,6 +237,53 @@ class _DistanceDetailsSheetState extends State<DistanceDetailsSheet> {
               ),
               const SizedBox(height: 12),
             ],
+            if (widget.onHealthWorkoutModeChanged != null) ...[
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1A1A22),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppTheme.panelBorder),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Text(
+                      'Apple Health workout',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      _healthWorkoutMode.description,
+                      style: TextStyle(
+                        color: AppTheme.textMuted.withValues(alpha: 0.95),
+                        fontSize: 11,
+                        height: 1.3,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: HealthWorkoutMode.values.map((mode) {
+                        final selected = mode == _healthWorkoutMode;
+                        return _HealthWorkoutModeChip(
+                          label: mode.label,
+                          selected: selected,
+                          onTap: () => _onHealthWorkoutModeSelected(mode),
+                        );
+                      }).toList(),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
             Flexible(
               child: SingleChildScrollView(
                 child: info == null
@@ -294,6 +362,49 @@ class _SheetTabChip extends StatelessWidget {
             label,
             style: TextStyle(
               color: selected ? AppTheme.measureBlue : AppTheme.textMuted,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _HealthWorkoutModeChip extends StatelessWidget {
+  const _HealthWorkoutModeChip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: selected
+          ? AppTheme.accentGreen.withValues(alpha: 0.15)
+          : const Color(0xFF1A1A22),
+      borderRadius: BorderRadius.circular(20),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(20),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: selected ? AppTheme.accentGreen : AppTheme.panelBorder,
+            ),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              color: selected ? AppTheme.accentGreen : AppTheme.textMuted,
               fontSize: 12,
               fontWeight: FontWeight.w700,
             ),

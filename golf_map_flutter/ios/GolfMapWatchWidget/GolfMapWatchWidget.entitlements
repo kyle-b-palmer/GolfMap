@@ -6,7 +6,5 @@
 	<array>
 		<string>group.com.golfmapapp.golfMapFlutter</string>
 	</array>
-	<key>com.apple.developer.healthkit</key>
-	<true/>
 </dict>
 </plist>

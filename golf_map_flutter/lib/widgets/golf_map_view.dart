@@ -9,7 +9,9 @@ import '../config/app_config.dart';
 import '../config/app_theme.dart';
 import '../models/golf_feature.dart';
 import '../models/measurement_chain.dart';
+import '../models/pin_type.dart';
 import '../models/pinned_shot.dart';
+import '../services/shot_dispersion_service.dart';
 import '../utils/geo_utils.dart';
 import 'apple_maps_backdrop.dart';
 import 'map_marker_graphics.dart';
@@ -45,6 +47,16 @@ class GolfMapView extends StatefulWidget {
     this.greenYardages,
     this.bunkerDistances = const [],
     this.showGreenYardageCallout = false,
+    this.dispersionPoints = const [],
+    this.showDispersion = false,
+    this.holeLocked = false,
+    this.clubAimPoint,
+    this.clubAimOrigin,
+    this.onClubAimDrag,
+    this.onClubAimDragEnd,
+    this.gpsSimMode = false,
+    this.onUserCoordDrag,
+    this.onUserCoordDragEnd,
   });
 
   final MapController mapController;
@@ -75,6 +87,16 @@ class GolfMapView extends StatefulWidget {
   final GreenYardages? greenYardages;
   final List<BunkerDistance> bunkerDistances;
   final bool showGreenYardageCallout;
+  final List<DispersionPoint> dispersionPoints;
+  final bool showDispersion;
+  final bool holeLocked;
+  final LatLng? clubAimPoint;
+  final LatLng? clubAimOrigin;
+  final void Function(LatLng point)? onClubAimDrag;
+  final void Function(LatLng point)? onClubAimDragEnd;
+  final bool gpsSimMode;
+  final void Function(LatLng point)? onUserCoordDrag;
+  final void Function(LatLng point)? onUserCoordDragEnd;
 
   @override
   State<GolfMapView> createState() => _GolfMapViewState();
@@ -85,6 +107,12 @@ class _GolfMapViewState extends State<GolfMapView> {
   LatLng? _dragLockedCoord;
   Offset? _panAnchorScreen;
   DateTime? _lastDragNotify;
+  bool _draggingClubAim = false;
+  LatLng? _dragClubAimCoord;
+  Offset? _clubAimPanAnchorScreen;
+  bool _draggingUserCoord = false;
+  LatLng? _dragUserCoord;
+  Offset? _userCoordPanAnchorScreen;
   List<Widget> _baseLayers = [];
   double _calloutZoom = 15;
   final _appleBackdropKey = GlobalKey<AppleMapsBackdropState>();
@@ -94,7 +122,8 @@ class _GolfMapViewState extends State<GolfMapView> {
   static const _pinnedShotHitPixels = 34.0;
   static const _dragNotifyInterval = Duration(milliseconds: 50);
 
-  bool get _isDragging => _draggingLockedIndex != null;
+  bool get _isDragging =>
+      _draggingLockedIndex != null || _draggingClubAim || _draggingUserCoord;
 
   /// Keep marker graphics upright when the map is rotated tee → green.
   MarkerLayer _uprightMarkerLayer(List<Marker> markers) =>
@@ -128,21 +157,30 @@ class _GolfMapViewState extends State<GolfMapView> {
     LatLng from,
     LatLng to, {
     required bool dashed,
+    Color? lineColor,
+    Color? outlineColor,
   }) {
+    final effectiveLineColor = lineColor ??
+        (dashed ? AppTheme.measureBlueBright : AppTheme.measureBlue);
+    final effectiveOutline = outlineColor ??
+        Colors.white.withValues(alpha: dashed ? 0.55 : 0.45);
+    final outlineWidth = dashed ? 5.5 : 5.0;
+    final lineWidth = dashed ? 3.5 : 3.0;
+
     if (dashed) {
       lines.add(
         Polyline(
           points: [from, to],
-          color: Colors.white.withValues(alpha: 0.55),
-          strokeWidth: 5.5,
+          color: effectiveOutline,
+          strokeWidth: outlineWidth,
           pattern: StrokePattern.dashed(segments: [16, 9]),
         ),
       );
       lines.add(
         Polyline(
           points: [from, to],
-          color: AppTheme.measureBlueBright,
-          strokeWidth: 3.5,
+          color: effectiveLineColor,
+          strokeWidth: lineWidth,
           pattern: StrokePattern.dashed(segments: [16, 9]),
         ),
       );
@@ -152,15 +190,15 @@ class _GolfMapViewState extends State<GolfMapView> {
     lines.add(
       Polyline(
         points: [from, to],
-        color: Colors.white.withValues(alpha: 0.45),
-        strokeWidth: 5,
+        color: effectiveOutline,
+        strokeWidth: outlineWidth,
       ),
     );
     lines.add(
       Polyline(
         points: [from, to],
-        color: AppTheme.measureBlue,
-        strokeWidth: 3,
+        color: effectiveLineColor,
+        strokeWidth: lineWidth,
       ),
     );
   }
@@ -214,6 +252,7 @@ class _GolfMapViewState extends State<GolfMapView> {
       widget.selectedPinnedShotIndex != null;
 
   void _beginLockedPinDrag(int index) {
+    if (widget.holeLocked) return;
     if (widget.selectedMeasurementPinIndex != index) {
       widget.onSelectMeasurementPin(index);
     }
@@ -253,6 +292,98 @@ class _GolfMapViewState extends State<GolfMapView> {
     });
     _notifyLockedDrag(index, finalCoord, force: true);
     widget.onLockedMeasurementDragEnd(index, finalCoord);
+  }
+
+  LatLng? get _effectiveClubAimPoint {
+    if (_draggingClubAim && _dragClubAimCoord != null) {
+      return _dragClubAimCoord;
+    }
+    return widget.clubAimPoint;
+  }
+
+  void _beginClubAimDrag() {
+    if (widget.holeLocked || widget.onClubAimDrag == null) return;
+    final anchor = widget.clubAimPoint;
+    if (anchor == null) return;
+    final screen = widget.mapController.camera.latLngToScreenOffset(anchor);
+    setState(() {
+      _draggingClubAim = true;
+      _dragClubAimCoord = anchor;
+      _clubAimPanAnchorScreen = screen;
+    });
+  }
+
+  void _updateClubAimDrag(DragUpdateDetails details) {
+    if (!_draggingClubAim) return;
+    final anchor = _clubAimPanAnchorScreen;
+    if (anchor == null) return;
+    final nextScreen = anchor + details.delta;
+    final updated = _screenOffsetToLatLng(nextScreen);
+    if (updated == null) return;
+    setState(() {
+      _clubAimPanAnchorScreen = nextScreen;
+      _dragClubAimCoord = updated;
+    });
+    widget.onClubAimDrag?.call(updated);
+  }
+
+  void _endClubAimDrag() {
+    if (!_draggingClubAim) return;
+    final finalCoord = _dragClubAimCoord ?? widget.clubAimPoint;
+    setState(() {
+      _draggingClubAim = false;
+      _dragClubAimCoord = null;
+      _clubAimPanAnchorScreen = null;
+    });
+    if (finalCoord != null) {
+      widget.onClubAimDragEnd?.call(finalCoord);
+    }
+  }
+
+  LatLng? get _effectiveUserCoord {
+    if (_draggingUserCoord && _dragUserCoord != null) {
+      return _dragUserCoord;
+    }
+    return widget.userCoord;
+  }
+
+  void _beginUserCoordDrag() {
+    if (!widget.gpsSimMode || widget.onUserCoordDrag == null) return;
+    final anchor = widget.userCoord;
+    if (anchor == null) return;
+    final screen = widget.mapController.camera.latLngToScreenOffset(anchor);
+    setState(() {
+      _draggingUserCoord = true;
+      _dragUserCoord = anchor;
+      _userCoordPanAnchorScreen = screen;
+    });
+  }
+
+  void _updateUserCoordDrag(DragUpdateDetails details) {
+    if (!_draggingUserCoord) return;
+    final anchor = _userCoordPanAnchorScreen;
+    if (anchor == null) return;
+    final nextScreen = anchor + details.delta;
+    final updated = _screenOffsetToLatLng(nextScreen);
+    if (updated == null) return;
+    setState(() {
+      _userCoordPanAnchorScreen = nextScreen;
+      _dragUserCoord = updated;
+    });
+    widget.onUserCoordDrag?.call(updated);
+  }
+
+  void _endUserCoordDrag() {
+    if (!_draggingUserCoord) return;
+    final finalCoord = _dragUserCoord ?? widget.userCoord;
+    setState(() {
+      _draggingUserCoord = false;
+      _dragUserCoord = null;
+      _userCoordPanAnchorScreen = null;
+    });
+    if (finalCoord != null) {
+      widget.onUserCoordDragEnd?.call(finalCoord);
+    }
   }
 
   Marker _draggableLockedMeasurementMarker(
@@ -378,10 +509,236 @@ class _GolfMapViewState extends State<GolfMapView> {
       PolylineLayer(polylines: _buildHoleBoundaryPolylines()),
       _uprightMarkerLayer(_buildTeeMarkers()),
       _uprightMarkerLayer(_buildGreenPinMarkers()),
-      if (widget.userCoord != null &&
-          (widget.shotOrigin == null || widget.userCoord != widget.shotOrigin))
-        _uprightMarkerLayer([_userMarker(widget.userCoord!)]),
     ];
+  }
+
+  LatLng? get _lastTrackedPoint {
+    final sorted = [...widget.pinnedShots]
+      ..sort((a, b) => a.shotNumber.compareTo(b.shotNumber));
+    final shotPins =
+        sorted.where((shot) => shot.pinType != PinType.lostBall).toList();
+    if (shotPins.isNotEmpty) {
+      final last = shotPins.last;
+      return LatLng(last.latitude, last.longitude);
+    }
+    if (widget.lockedMeasurementPoints.isNotEmpty) {
+      return widget.lockedMeasurementPoints.last.point;
+    }
+    return null;
+  }
+
+  List<Widget> _buildUserToLastTrackedLayers() {
+    final userPoint = _effectiveUserCoord;
+    final target = _lastTrackedPoint;
+    if (userPoint == null || target == null) return [];
+
+    final distToPin = metersToYards(distanceMeters(target, userPoint));
+    if (distToPin < 1) return [];
+
+    final lines = <Polyline>[];
+    _addSegmentLine(lines, target, userPoint, dashed: true);
+    final mid = LatLng(
+      (target.latitude + userPoint.latitude) / 2,
+      (target.longitude + userPoint.longitude) / 2,
+    );
+
+    return [
+      PolylineLayer(polylines: lines),
+      _uprightMarkerLayer([
+        Marker(
+          point: mid,
+          width: 104,
+          height: 28,
+          alignment: Alignment.center,
+          child: Center(
+            child: _ShotDistanceLabel(
+              yards: distToPin,
+              borderColor: const Color(0xFF81D4FA),
+              textColor: const Color(0xFFE1F5FE),
+            ),
+          ),
+        ),
+      ]),
+    ];
+  }
+
+  List<Widget> _buildApproachToGreenLayers(LatLng from) {
+    final green = widget.greenCenter;
+    if (green == null) return [];
+
+    final yards = metersToYards(distanceMeters(from, green));
+    if (yards < 1) return [];
+
+    final lines = <Polyline>[];
+    _addSegmentLine(
+      lines,
+      from,
+      green,
+      dashed: true,
+      lineColor: const Color(0xFFEF4444),
+      outlineColor: Colors.white.withValues(alpha: 0.5),
+    );
+    final mid = LatLng(
+      (from.latitude + green.latitude) / 2,
+      (from.longitude + green.longitude) / 2,
+    );
+
+    return [
+      PolylineLayer(polylines: lines),
+      _uprightMarkerLayer([
+        Marker(
+          point: mid,
+          width: 104,
+          height: 28,
+          alignment: Alignment.center,
+          child: Center(
+            child: _ShotDistanceLabel(
+              yards: yards,
+              borderColor: const Color(0xFFEF4444),
+              textColor: const Color(0xFFFFCDD2),
+            ),
+          ),
+        ),
+      ]),
+    ];
+  }
+
+  List<Widget> _buildClubAimLayers() {
+    final target = _effectiveClubAimPoint;
+    final origin = widget.clubAimOrigin;
+    if (target == null || origin == null) return [];
+
+    final yards = metersToYards(distanceMeters(origin, target));
+    if (yards < 1) return [];
+
+    final lines = <Polyline>[];
+    _addSegmentLine(
+      lines,
+      origin,
+      target,
+      dashed: true,
+      lineColor: const Color(0xFF7DD3FC),
+      outlineColor: Colors.white.withValues(alpha: 0.5),
+    );
+    final mid = LatLng(
+      (origin.latitude + target.latitude) / 2,
+      (origin.longitude + target.longitude) / 2,
+    );
+
+    final canDrag = widget.onClubAimDrag != null && !widget.holeLocked;
+
+    return [
+      PolylineLayer(polylines: lines),
+      _uprightMarkerLayer([
+        Marker(
+          point: mid,
+          width: 88,
+          height: 28,
+          alignment: Alignment.center,
+          child: Center(
+            child: _ShotDistanceLabel(
+              yards: yards,
+              borderColor: const Color(0xFF7DD3FC),
+              textColor: const Color(0xFFE1F5FE),
+            ),
+          ),
+        ),
+        Marker(
+          point: target,
+          width: canDrag ? 40 : 34,
+          height: canDrag ? 40 : 34,
+          alignment: Alignment.center,
+          child: canDrag
+              ? RawGestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  gestures: <Type, GestureRecognizerFactory>{
+                    _EagerPanGestureRecognizer:
+                        GestureRecognizerFactoryWithHandlers<
+                            _EagerPanGestureRecognizer>(
+                      _EagerPanGestureRecognizer.new,
+                      (recognizer) {
+                        recognizer.onStart = (_) => _beginClubAimDrag();
+                        recognizer.onUpdate = _updateClubAimDrag;
+                        recognizer.onEnd = (_) => _endClubAimDrag();
+                        recognizer.onCancel = _endClubAimDrag;
+                      },
+                    ),
+                  },
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF0EA5E9),
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: _draggingClubAim
+                            ? const Color(0xFFFFD54F)
+                            : Colors.white,
+                        width: 2,
+                      ),
+                    ),
+                    child: const Icon(
+                      Icons.adjust_rounded,
+                      color: Colors.white,
+                      size: 18,
+                    ),
+                  ),
+                )
+              : Container(
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF0EA5E9),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white, width: 2),
+                  ),
+                  child: const Icon(
+                    Icons.adjust_rounded,
+                    color: Colors.white,
+                    size: 18,
+                  ),
+                ),
+        ),
+      ]),
+    ];
+  }
+
+  List<Widget> _buildLastTrackedToGreenLayers() {
+    final from = _lastTrackedPoint;
+    final green = widget.greenCenter;
+    if (from == null || green == null) return [];
+
+    final yards = metersToYards(distanceMeters(from, green));
+    if (yards < 1) return [];
+
+    final lines = <Polyline>[];
+    _addSegmentLine(
+      lines,
+      from,
+      green,
+      dashed: true,
+      lineColor: const Color(0xFFFF9800),
+      outlineColor: Colors.white.withValues(alpha: 0.45),
+    );
+    final mid = LatLng(
+      (from.latitude + green.latitude) / 2,
+      (from.longitude + green.longitude) / 2,
+    );
+
+    return [
+      PolylineLayer(polylines: lines),
+      _uprightMarkerLayer([
+        Marker(
+          point: mid,
+          width: 88,
+          height: 28,
+          alignment: Alignment.center,
+          child: Center(child: _ShotDistanceLabel(yards: yards)),
+        ),
+      ]),
+    ];
+  }
+
+  List<Widget> _buildUserToGreenLayers() {
+    final userPoint = _effectiveUserCoord;
+    if (userPoint == null) return [];
+    return _buildApproachToGreenLayers(userPoint);
   }
 
   @override
@@ -466,7 +823,30 @@ class _GolfMapViewState extends State<GolfMapView> {
             ],
           ),
         if (widget.pinnedShots.isNotEmpty) ..._buildPinnedShotLayers(),
+        if (_effectiveUserCoord != null && !widget.holeLocked)
+          _uprightMarkerLayer([
+            _userMarker(
+              _effectiveUserCoord!,
+              draggable: widget.gpsSimMode && widget.onUserCoordDrag != null,
+            ),
+          ]),
+        if (!widget.holeLocked &&
+            _effectiveUserCoord != null &&
+            _lastTrackedPoint != null &&
+            widget.lockedMeasurementPoints.isEmpty)
+          ..._buildUserToLastTrackedLayers(),
+        if (widget.holeLocked &&
+            _lastTrackedPoint != null &&
+            widget.greenCenter != null)
+          ..._buildLastTrackedToGreenLayers(),
+        if (!widget.holeLocked &&
+            _effectiveUserCoord != null &&
+            widget.greenCenter != null)
+          ..._buildUserToGreenLayers(),
+        if (widget.showDispersion && widget.dispersionPoints.isNotEmpty)
+          ..._buildDispersionLayers(),
         if (widget.showShotDirection) ..._buildShotDirectionLayers(),
+        if (widget.clubAimPoint != null) ..._buildClubAimLayers(),
         if (widget.lockedMeasurementPoints.isNotEmpty)
           ..._buildMeasurementLayers(),
         if (widget.lockedMeasurementPoints.isNotEmpty)
@@ -592,6 +972,27 @@ class _GolfMapViewState extends State<GolfMapView> {
 
       final yards = shot.shotYards ??
           metersToYards(distanceMeters(from, to));
+      if (yards < 1) {
+        markers.add(
+          Marker(
+            point: to,
+            width: 40,
+            height: 40,
+            alignment: Alignment.center,
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => widget.onSelectPinnedShot(i),
+              child: _PinnedShotMarker(
+                shotNumber: shot.shotNumber,
+                isSelected: widget.selectedPinnedShotIndex == i,
+                isLostBall: shot.pinType == PinType.lostBall,
+              ),
+            ),
+          ),
+        );
+        continue;
+      }
+
       final mid = LatLng(
         (from.latitude + to.latitude) / 2,
         (from.longitude + to.longitude) / 2,
@@ -634,40 +1035,11 @@ class _GolfMapViewState extends State<GolfMapView> {
             child: _PinnedShotMarker(
               shotNumber: shot.shotNumber,
               isSelected: widget.selectedPinnedShotIndex == i,
+              isLostBall: shot.pinType == PinType.lostBall,
             ),
           ),
         ),
       );
-    }
-
-    if (widget.userCoord != null && sorted.isNotEmpty) {
-      final lastPin = sorted.last;
-      final pinPoint = LatLng(lastPin.latitude, lastPin.longitude);
-      final userPoint = widget.userCoord!;
-      final distToPin = metersToYards(distanceMeters(pinPoint, userPoint));
-
-      if (distToPin >= 3) {
-        _addSegmentLine(lines, pinPoint, userPoint, dashed: true);
-        final mid = LatLng(
-          (pinPoint.latitude + userPoint.latitude) / 2,
-          (pinPoint.longitude + userPoint.longitude) / 2,
-        );
-        markers.add(
-          Marker(
-            point: mid,
-            width: 96,
-            height: 28,
-            alignment: Alignment.center,
-            child: Center(
-              child: _ShotDistanceLabel(
-                yards: distToPin,
-                borderColor: const Color(0xFF81D4FA),
-                textColor: const Color(0xFFE1F5FE),
-              ),
-            ),
-          ),
-        );
-      }
     }
 
     return [
@@ -693,7 +1065,7 @@ class _GolfMapViewState extends State<GolfMapView> {
     }
 
     final terminal = _chainTerminal;
-    if (terminal != null && widget.greenCenter != null) {
+    if (terminal != null && widget.greenCenter != null && !widget.holeLocked) {
       _addSegmentLine(lines, terminal, widget.greenCenter!, dashed: false);
     }
 
@@ -704,21 +1076,48 @@ class _GolfMapViewState extends State<GolfMapView> {
     ];
   }
 
+  List<Widget> _buildDispersionLayers() {
+    final maxWeight = widget.dispersionPoints
+        .map((p) => p.weight)
+        .fold<double>(1, (a, b) => a > b ? a : b);
+    final circles = <CircleMarker>[];
+    for (final point in widget.dispersionPoints) {
+      final radius = 6 + (point.weight / maxWeight) * 14;
+      circles.add(
+        CircleMarker(
+          point: LatLng(point.latitude, point.longitude),
+          radius: radius,
+          color: AppTheme.accentGreen.withValues(
+            alpha: 0.15 + (point.weight / maxWeight) * 0.35,
+          ),
+          borderColor: AppTheme.accentGreen.withValues(alpha: 0.5),
+          borderStrokeWidth: 1,
+        ),
+      );
+    }
+    return [CircleLayer(circles: circles)];
+  }
+
   List<Marker> _buildBunkerDistanceMarkers() {
     final markers = <Marker>[];
     for (final bunker in widget.bunkerDistances) {
-      if (bunker.point == null || bunker.yards <= 0) continue;
+      if (bunker.point == null) continue;
+
+      final displayYards = bunker.yards.abs();
+      if (displayYards < 1) continue;
+
       markers.add(
         Marker(
           point: bunker.point!,
-          width: 68,
+          width: 72,
           height: 28,
           alignment: Alignment.center,
           child: Center(
             child: _ShotDistanceLabel(
-            yards: bunker.yards,
-            borderColor: const Color(0xFFD4B86A),
-            textColor: const Color(0xFFF5E6B8),
+              yards: displayYards,
+              borderColor: const Color(0xFFD4B86A),
+              textColor: const Color(0xFFF5E6B8),
+              suffix: bunker.yards < 0 ? '·BK' : null,
             ),
           ),
         ),
@@ -744,8 +1143,7 @@ class _GolfMapViewState extends State<GolfMapView> {
     final holeFeatures = widget.features
         .where((f) => f.isActive(widget.selectedCourse, widget.selectedHole))
         .toList();
-    final reference =
-        widget.shotOrigin ?? longestTeeForHole(holeFeatures);
+    final reference = widget.shotOrigin;
     if (reference == null) return green;
 
     return backOfGreenPoint(reference, holeFeatures) ?? green;
@@ -960,7 +1358,6 @@ class _GolfMapViewState extends State<GolfMapView> {
     final start = shotDistanceOrigin(
       widget.userCoord,
       holeFeatures,
-      selectedTeeFeatureId: widget.selectedTeeFeatureId,
       course: widget.selectedCourse,
       hole: widget.selectedHole,
     );
@@ -991,6 +1388,10 @@ class _GolfMapViewState extends State<GolfMapView> {
           strokeWidth: 3,
         ),
       );
+
+      if (segment.carryPoint != null) {
+        _addSegmentLine(lines, segment.from, segment.carryPoint!, dashed: true);
+      }
 
       final mid = LatLng(
         (segment.from.latitude + segment.to.latitude) / 2,
@@ -1117,25 +1518,61 @@ class _GolfMapViewState extends State<GolfMapView> {
     return LatLng(sumLat / count, sumLng / count);
   }
 
-  Marker _userMarker(LatLng point) {
-    return Marker(
-      point: point,
+  Marker _userMarker(LatLng point, {bool draggable = false}) {
+    final dot = Container(
       width: 20,
       height: 20,
-      alignment: Alignment.center,
-      child: Container(
-        decoration: BoxDecoration(
-          color: const Color(0xFF34A853),
-          shape: BoxShape.circle,
-          border: Border.all(color: Colors.white, width: 2.5),
-          boxShadow: const [
-            BoxShadow(
-              color: Color(0x66000000),
-              blurRadius: 5,
-              offset: Offset(0, 1),
-            ),
-          ],
+      decoration: BoxDecoration(
+        color: widget.gpsSimMode
+            ? const Color(0xFFAB47BC)
+            : const Color(0xFF34A853),
+        shape: BoxShape.circle,
+        border: Border.all(
+          color: _draggingUserCoord
+              ? const Color(0xFFFFD54F)
+              : Colors.white,
+          width: draggable ? 3 : 2.5,
         ),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x66000000),
+            blurRadius: 5,
+            offset: Offset(0, 1),
+          ),
+        ],
+      ),
+    );
+
+    if (!draggable) {
+      return Marker(
+        point: point,
+        width: 20,
+        height: 20,
+        alignment: Alignment.center,
+        child: dot,
+      );
+    }
+
+    return Marker(
+      point: point,
+      width: 36,
+      height: 36,
+      alignment: Alignment.center,
+      child: RawGestureDetector(
+        behavior: HitTestBehavior.opaque,
+        gestures: <Type, GestureRecognizerFactory>{
+          _EagerPanGestureRecognizer:
+              GestureRecognizerFactoryWithHandlers<_EagerPanGestureRecognizer>(
+            _EagerPanGestureRecognizer.new,
+            (recognizer) {
+              recognizer.onStart = (_) => _beginUserCoordDrag();
+              recognizer.onUpdate = _updateUserCoordDrag;
+              recognizer.onEnd = (_) => _endUserCoordDrag();
+              recognizer.onCancel = _endUserCoordDrag;
+            },
+          ),
+        },
+        child: Center(child: dot),
       ),
     );
   }
@@ -1215,18 +1652,21 @@ class _PinnedShotMarker extends StatelessWidget {
   const _PinnedShotMarker({
     required this.shotNumber,
     this.isSelected = false,
+    this.isLostBall = false,
   });
 
   final int shotNumber;
   final bool isSelected;
+  final bool isLostBall;
 
   @override
   Widget build(BuildContext context) {
+    final fill = isLostBall ? const Color(0xFFEF4444) : const Color(0xFFFF9800);
     return Container(
       width: isSelected ? 26 : 22,
       height: isSelected ? 26 : 22,
       decoration: BoxDecoration(
-        color: const Color(0xFFFF9800),
+        color: fill,
         shape: BoxShape.circle,
         border: Border.all(
           color: isSelected ? const Color(0xFFFFD54F) : Colors.white,

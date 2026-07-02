@@ -7,6 +7,27 @@ struct GolfRoundGpsPin: Codable, Equatable {
     let hole: String
     let latitude: Double
     let longitude: Double
+    var pinKind: String?
+
+    init(
+        hole: String,
+        latitude: Double,
+        longitude: Double,
+        pinKind: String? = nil
+    ) {
+        self.hole = hole
+        self.latitude = latitude
+        self.longitude = longitude
+        self.pinKind = pinKind
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        hole = try container.decode(String.self, forKey: .hole)
+        latitude = try container.decode(Double.self, forKey: .latitude)
+        longitude = try container.decode(Double.self, forKey: .longitude)
+        pinKind = try container.decodeIfPresent(String.self, forKey: .pinKind)
+    }
 }
 
 struct GolfRoundSharedState: Codable {
@@ -24,8 +45,11 @@ struct GolfRoundSharedState: Codable {
     var greenLatitude: Double
     var greenLongitude: Double
     var gpsRefreshRevision: Int
+    var sessionId: String
 
     static let storageKey = "golf_round_shared_state"
+    static let activeSessionIdKey = "golf_round_active_session_id"
+    static let hostActiveKey = "golf_round_host_active"
     static let appGroupId = "group.com.golfmapapp.golfMapFlutter"
     static let activityId = "golf-round-live"
 
@@ -43,7 +67,8 @@ struct GolfRoundSharedState: Codable {
         pendingGpsPinUndos: [GolfRoundGpsPin] = [],
         greenLatitude: Double = 0,
         greenLongitude: Double = 0,
-        gpsRefreshRevision: Int = 0
+        gpsRefreshRevision: Int = 0,
+        sessionId: String = ""
     ) {
         self.holes = holes
         self.selectedHole = selectedHole
@@ -59,6 +84,7 @@ struct GolfRoundSharedState: Codable {
         self.greenLatitude = greenLatitude
         self.greenLongitude = greenLongitude
         self.gpsRefreshRevision = gpsRefreshRevision
+        self.sessionId = sessionId
     }
 
     init(from decoder: Decoder) throws {
@@ -83,6 +109,7 @@ struct GolfRoundSharedState: Codable {
         greenLatitude = try container.decodeIfPresent(Double.self, forKey: .greenLatitude) ?? 0
         greenLongitude = try container.decodeIfPresent(Double.self, forKey: .greenLongitude) ?? 0
         gpsRefreshRevision = try container.decodeIfPresent(Int.self, forKey: .gpsRefreshRevision) ?? 0
+        sessionId = try container.decodeIfPresent(String.self, forKey: .sessionId) ?? ""
     }
 
     var isActiveRound: Bool {
@@ -93,6 +120,14 @@ struct GolfRoundSharedState: Codable {
 enum GolfRoundLiveActivitySupport {
     static var interactiveControlsAvailable: Bool {
         if #available(iOS 17.0, *) {
+            return true
+        }
+        return false
+    }
+
+    /// Shared app-group round state + watch sync (independent of lock-screen controls).
+    static var sharedRoundStateAvailable: Bool {
+        if #available(iOS 16.1, *) {
             return true
         }
         return false
@@ -116,16 +151,34 @@ final class GolfRoundLiveActivityController {
         return try? JSONDecoder().decode(GolfRoundSharedState.self, from: data)
     }
 
+    func activeSessionId() -> String {
+        defaults?.string(forKey: GolfRoundSharedState.activeSessionIdKey) ?? ""
+    }
+
+    func setActiveSessionId(_ sessionId: String) {
+        defaults?.set(sessionId, forKey: GolfRoundSharedState.activeSessionIdKey)
+    }
+
     func saveState(_ state: GolfRoundSharedState) {
         guard let defaults,
               let data = try? JSONEncoder().encode(state) else {
             return
         }
         defaults.set(data, forKey: GolfRoundSharedState.storageKey)
+        setRoundHostActive(true)
     }
 
     func clearSharedState() {
         defaults?.removeObject(forKey: GolfRoundSharedState.storageKey)
+        setRoundHostActive(false)
+    }
+
+    func setRoundHostActive(_ active: Bool) {
+        defaults?.set(active, forKey: GolfRoundSharedState.hostActiveKey)
+    }
+
+    func isRoundHostActive() -> Bool {
+        defaults?.bool(forKey: GolfRoundSharedState.hostActiveKey) ?? false
     }
 
     func syncFromFlutter(
@@ -139,10 +192,17 @@ final class GolfRoundLiveActivityController {
         yardsToGreen: Int,
         revision: Int,
         greenLatitude: Double = 0,
-        greenLongitude: Double = 0
+        greenLongitude: Double = 0,
+        sessionId: String = ""
     ) {
-        let pendingGpsPins = loadState()?.pendingGpsPins ?? []
-        let pendingGpsPinUndos = loadState()?.pendingGpsPinUndos ?? []
+        let previous = loadState()
+        let sameSession = !sessionId.isEmpty && previous?.sessionId == sessionId
+        let pendingGpsPins = sameSession ? (previous?.pendingGpsPins ?? []) : []
+        let pendingGpsPinUndos = sameSession ? (previous?.pendingGpsPinUndos ?? []) : []
+        let gpsRefreshRevision = sameSession ? (previous?.gpsRefreshRevision ?? 0) : 0
+        if !sessionId.isEmpty {
+            setActiveSessionId(sessionId)
+        }
         let state = GolfRoundSharedState(
             holes: holes,
             selectedHole: selectedHole,
@@ -156,7 +216,9 @@ final class GolfRoundLiveActivityController {
             pendingGpsPins: pendingGpsPins,
             pendingGpsPinUndos: pendingGpsPinUndos,
             greenLatitude: greenLatitude,
-            greenLongitude: greenLongitude
+            greenLongitude: greenLongitude,
+            gpsRefreshRevision: gpsRefreshRevision,
+            sessionId: sessionId
         )
         saveState(state)
     }

@@ -32,6 +32,7 @@ final class WatchConnectivityClient: NSObject, ObservableObject, WCSessionDelega
         let payload: [String: Any] = [
             "type": "roundState",
             "revision": state.revision,
+            "sessionId": state.sessionId,
             "state": state.dictionaryPayload(),
         ]
 
@@ -66,15 +67,57 @@ final class WatchConnectivityClient: NSObject, ObservableObject, WCSessionDelega
             ["type": "requestRoundState"],
             replyHandler: { [weak self] reply in
                 Task { @MainActor in
+                    if reply["ok"] as? Bool == false {
+                        if GolfRoundWatchStore.shared.reconcilePhoneAppGroupState() {
+                            NotificationCenter.default.post(
+                                name: .golfRoundWatchStateDidChange,
+                                object: nil
+                            )
+                            return
+                        }
+                        if GolfRoundWatchStore.shared.reconcilePhoneHostAvailability() {
+                            NotificationCenter.default.post(
+                                name: .golfRoundWatchStateDidChange,
+                                object: nil
+                            )
+                        }
+                        return
+                    }
                     self?.applyIncomingPayload(reply)
                 }
             },
-            errorHandler: nil
+            errorHandler: { _ in
+                Task { @MainActor in
+                    guard GolfRoundWatchStore.shared.load()?.isActiveRound == true else { return }
+                    if GolfRoundWatchStore.shared.reconcilePhoneHostAvailability() {
+                        NotificationCenter.default.post(
+                            name: .golfRoundWatchStateDidChange,
+                            object: nil
+                        )
+                    }
+                }
+            }
         )
     }
 
     private func applyIncomingPayload(_ payload: [String: Any]) {
-        guard let state = decodeState(from: payload) else { return }
+        if payload["type"] as? String == "roundState",
+           let state = decodeState(from: payload),
+           state.isActiveRound {
+            GolfRoundWatchStore.shared.mergePhoneState(state)
+            NotificationCenter.default.post(name: .golfRoundWatchStateDidChange, object: nil)
+            return
+        }
+
+        if payload["type"] as? String == "sessionReset" {
+            let sessionId = payload["sessionId"] as? String ?? ""
+            if GolfRoundWatchStore.shared.applySessionResetIfNeeded(sessionId: sessionId) {
+                NotificationCenter.default.post(name: .golfRoundWatchStateDidChange, object: nil)
+            }
+            return
+        }
+
+        guard let state = decodeState(from: payload), state.isActiveRound else { return }
         GolfRoundWatchStore.shared.mergePhoneState(state)
         NotificationCenter.default.post(name: .golfRoundWatchStateDidChange, object: nil)
     }

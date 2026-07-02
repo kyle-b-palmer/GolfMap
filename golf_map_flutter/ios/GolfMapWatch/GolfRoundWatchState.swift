@@ -6,6 +6,27 @@ struct GolfRoundGpsPin: Codable, Equatable {
     let hole: String
     let latitude: Double
     let longitude: Double
+    var pinKind: String?
+
+    init(
+        hole: String,
+        latitude: Double,
+        longitude: Double,
+        pinKind: String? = nil
+    ) {
+        self.hole = hole
+        self.latitude = latitude
+        self.longitude = longitude
+        self.pinKind = pinKind
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        hole = try container.decode(String.self, forKey: .hole)
+        latitude = try container.decode(Double.self, forKey: .latitude)
+        longitude = try container.decode(Double.self, forKey: .longitude)
+        pinKind = try container.decodeIfPresent(String.self, forKey: .pinKind)
+    }
 }
 
 struct GolfRoundSharedState: Codable, Equatable {
@@ -23,9 +44,13 @@ struct GolfRoundSharedState: Codable, Equatable {
     var greenLatitude: Double
     var greenLongitude: Double
     var gpsRefreshRevision: Int
+    var sessionId: String
 
     static let storageKey = "golf_round_watch_state"
+    static let phoneSharedStorageKey = "golf_round_shared_state"
+    static let hostActiveKey = "golf_round_host_active"
     static let watchConnectivityKey = "roundState"
+    static let appGroupId = "group.com.golfmapapp.golfMapFlutter"
 
     init(
         holes: [String] = [],
@@ -41,7 +66,8 @@ struct GolfRoundSharedState: Codable, Equatable {
         pendingGpsPinUndos: [GolfRoundGpsPin] = [],
         greenLatitude: Double = 0,
         greenLongitude: Double = 0,
-        gpsRefreshRevision: Int = 0
+        gpsRefreshRevision: Int = 0,
+        sessionId: String = ""
     ) {
         self.holes = holes
         self.selectedHole = selectedHole
@@ -57,6 +83,7 @@ struct GolfRoundSharedState: Codable, Equatable {
         self.greenLatitude = greenLatitude
         self.greenLongitude = greenLongitude
         self.gpsRefreshRevision = gpsRefreshRevision
+        self.sessionId = sessionId
     }
 
     init(from decoder: Decoder) throws {
@@ -81,6 +108,7 @@ struct GolfRoundSharedState: Codable, Equatable {
         greenLatitude = try container.decodeIfPresent(Double.self, forKey: .greenLatitude) ?? 0
         greenLongitude = try container.decodeIfPresent(Double.self, forKey: .greenLongitude) ?? 0
         gpsRefreshRevision = try container.decodeIfPresent(Int.self, forKey: .gpsRefreshRevision) ?? 0
+        sessionId = try container.decodeIfPresent(String.self, forKey: .sessionId) ?? ""
     }
 
     var isActiveRound: Bool {
@@ -147,10 +175,62 @@ final class GolfRoundWatchStore {
     static let shared = GolfRoundWatchStore()
 
     private let defaults = UserDefaults.standard
+    private var appGroupDefaults: UserDefaults? {
+        UserDefaults(suiteName: GolfRoundSharedState.appGroupId)
+    }
     private static let acceptedSwingsKey = "golf_round_accepted_swings"
     private static let dedupRadiusYards = 25
 
     private init() {}
+
+    func loadPhoneAppGroupState() -> GolfRoundSharedState? {
+        guard let defaults = appGroupDefaults,
+              let data = defaults.data(forKey: GolfRoundSharedState.phoneSharedStorageKey) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(GolfRoundSharedState.self, from: data)
+    }
+
+    func isPhoneRoundHostActive() -> Bool {
+        appGroupDefaults?.bool(forKey: GolfRoundSharedState.hostActiveKey) ?? false
+    }
+
+    @discardableResult
+    func reconcilePhoneAppGroupState() -> Bool {
+        guard let phone = loadPhoneAppGroupState(),
+              phone.isActiveRound else {
+            return false
+        }
+
+        mergePhoneState(phone)
+        return true
+    }
+
+    @discardableResult
+    func reconcilePhoneHostAvailability() -> Bool {
+        guard let local = load(), local.isActiveRound else { return false }
+
+        let phoneState = loadPhoneAppGroupState()
+        let hostActive = isPhoneRoundHostActive()
+
+        if let phoneState,
+           phoneState.isActiveRound,
+           !local.sessionId.isEmpty,
+           !phoneState.sessionId.isEmpty,
+           local.sessionId != phoneState.sessionId {
+            replaceWithPhoneSession(phoneState)
+            return true
+        }
+
+        if let phoneState, phoneState.isActiveRound {
+            return false
+        }
+
+        guard !hostActive else { return false }
+
+        clearLocalSession()
+        return true
+    }
 
     func load() -> GolfRoundSharedState? {
         guard let data = defaults.data(forKey: GolfRoundSharedState.storageKey) else {
@@ -164,30 +244,112 @@ final class GolfRoundWatchStore {
         defaults.set(data, forKey: GolfRoundSharedState.storageKey)
     }
 
+    func clearLocalSession() {
+        defaults.removeObject(forKey: GolfRoundSharedState.storageKey)
+        clearAcceptedSwingPins()
+    }
+
+    func handleSessionReset(sessionId: String) {
+        _ = sessionId
+        clearLocalSession()
+    }
+
+    /// Ignore stale phone session resets while a newer round is already active.
+    func shouldIgnoreSessionReset(_ sessionId: String) -> Bool {
+        if isPhoneRoundHostActive() {
+            return true
+        }
+
+        if let phone = loadPhoneAppGroupState(), phone.isActiveRound {
+            mergePhoneState(phone)
+            return true
+        }
+
+        if let local = load(), local.isActiveRound,
+           !sessionId.isEmpty, !local.sessionId.isEmpty,
+           sessionId != local.sessionId {
+            return true
+        }
+
+        return false
+    }
+
+    @discardableResult
+    func applySessionResetIfNeeded(sessionId: String) -> Bool {
+        guard !shouldIgnoreSessionReset(sessionId) else { return false }
+        handleSessionReset(sessionId: sessionId)
+        return true
+    }
+
+    private func roundState(from context: [String: Any]) -> GolfRoundSharedState? {
+        if let nested = context["state"] as? [String: Any],
+           let phone = GolfRoundSharedState.fromDictionary(nested),
+           phone.isActiveRound {
+            return phone
+        }
+        return nil
+    }
+
+    func replaceWithPhoneSession(_ phone: GolfRoundSharedState) {
+        clearAcceptedSwingPins()
+        save(phone)
+    }
+
+    private func sessionsMismatch(local: GolfRoundSharedState?, phone: GolfRoundSharedState) -> Bool {
+        if !phone.sessionId.isEmpty {
+            if local?.sessionId != phone.sessionId {
+                return true
+            }
+            return false
+        }
+
+        if let local, local.isActiveRound, local.courseName != phone.courseName {
+            return true
+        }
+        return false
+    }
+
     func applyPhoneState(_ state: GolfRoundSharedState) {
         mergePhoneState(state)
     }
 
     @discardableResult
     func reconcileFromPhoneContext() -> Bool {
+        if reconcilePhoneAppGroupState() {
+            return true
+        }
+
         guard WCSession.isSupported() else { return false }
         let session = WCSession.default
         guard session.activationState == .activated else { return false }
 
-        guard let nested = session.receivedApplicationContext["state"] as? [String: Any],
-              let phone = GolfRoundSharedState.fromDictionary(nested),
-              phone.isActiveRound else {
+        let context = session.receivedApplicationContext
+
+        if context["type"] as? String == "roundState",
+           let phone = roundState(from: context) {
+            mergePhoneState(phone)
+            return true
+        }
+
+        if context["type"] as? String == "sessionReset" {
+            let sessionId = context["sessionId"] as? String ?? ""
+            _ = applySessionResetIfNeeded(sessionId: sessionId)
             return false
         }
 
-        mergePhoneState(phone)
-        return true
+        return false
     }
 
     func mergePhoneState(_ phone: GolfRoundSharedState) {
         guard phone.isActiveRound else { return }
 
-        guard var local = load(), local.isActiveRound else {
+        let local = load()
+        if sessionsMismatch(local: local, phone: phone) {
+            replaceWithPhoneSession(phone)
+            return
+        }
+
+        guard var local, local.isActiveRound else {
             save(phone)
             return
         }
@@ -447,6 +609,29 @@ final class GolfRoundWatchStore {
         accepted.append(pin)
         saveAcceptedSwingPins(accepted)
 
+        state.pendingGpsPins.append(pin)
+
+        let currentScore = state.scores[hole] ?? 0
+        state.scores[hole] = min(99, currentScore + 1)
+        bumpRevision(&state)
+        save(state)
+        return state
+    }
+
+    @discardableResult
+    func recordLostBall(
+        hole: String,
+        latitude: Double,
+        longitude: Double
+    ) -> GolfRoundSharedState? {
+        guard var state = load(), state.isActiveRound else { return nil }
+
+        let pin = GolfRoundGpsPin(
+            hole: hole,
+            latitude: latitude,
+            longitude: longitude,
+            pinKind: "lostBall"
+        )
         state.pendingGpsPins.append(pin)
 
         let currentScore = state.scores[hole] ?? 0

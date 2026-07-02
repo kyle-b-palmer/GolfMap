@@ -13,6 +13,7 @@
 #   ./tool/install_ios_with_watch.sh KP          # device name from `flutter devices`
 #   ./tool/install_ios_with_watch.sh KP --debug    # for flutter run / Xcode Run only
 #   ./tool/install_ios_with_watch.sh KP --clean    # clean Xcode build folder first
+#   ./tool/install_ios_with_watch.sh KP --phone-only  # skip direct watch push (faster)
 
 set -euo pipefail
 
@@ -23,6 +24,7 @@ CONFIGURATION="Release"
 DEVICE_NAME=""
 WATCH_NAME=""
 DO_CLEAN=0
+PHONE_ONLY=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -36,6 +38,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --clean)
       DO_CLEAN=1
+      shift
+      ;;
+    --phone-only)
+      PHONE_ONLY=1
       shift
       ;;
     --watch)
@@ -143,10 +149,12 @@ for device in devices:
 
 resolve_watch_core_device_id() {
   local watch_name="${1:-}"
+  local require_connected="${2:-1}"
   xcrun devicectl list devices --json-output - 2>/dev/null | python3 -c "
 import json, sys
 
 watch_name = sys.argv[1].strip().lower()
+require_connected = sys.argv[2].strip() != '0'
 devices = json.load(sys.stdin).get('result', {}).get('devices', [])
 
 def watch_rank(device):
@@ -160,6 +168,8 @@ def watch_rank(device):
         return 4
     if tunnel == 'connecting':
         return 3
+    if require_connected:
+        return -1
     if pairing == 'paired':
         return 2
     if tunnel in ('', 'disconnected') and device.get('deviceProperties', {}).get('name'):
@@ -181,23 +191,71 @@ if not candidates:
 
 candidates.sort(key=lambda item: item[0], reverse=True)
 print(candidates[0][1]['identifier'])
-" "$watch_name" 2>/dev/null || true
+" "$watch_name" "$require_connected" 2>/dev/null || true
+}
+
+describe_watch_devices() {
+  xcrun devicectl list devices --json-output - 2>/dev/null | python3 -c "
+import json, sys
+
+devices = json.load(sys.stdin).get('result', {}).get('devices', [])
+watches = [
+    d for d in devices
+    if d.get('hardwareProperties', {}).get('platform') == 'watchOS'
+]
+if not watches:
+    print('  (no watchOS devices visible to devicectl)')
+    sys.exit(0)
+
+for device in watches:
+    props = device.get('deviceProperties', {})
+    conn = device.get('connectionProperties', {})
+    hw = device.get('hardwareProperties', {})
+    name = props.get('name', 'Unknown Watch')
+    tunnel = conn.get('tunnelState', 'unknown')
+    pairing = conn.get('pairingState', 'unknown')
+    transport = conn.get('transportType', 'unknown')
+    last_seen = conn.get('lastConnectionDate', 'never')
+    print(f'  - {name}: pairing={pairing}, tunnel={tunnel}, transport={transport}, last_seen={last_seen}')
+" 2>/dev/null || true
 }
 
 wait_for_watch_device() {
   local watch_name="${1:-}"
-  local attempts="${2:-20}"
+  local attempts="${2:-45}"
   local device_id=""
-  echo "==> Looking for paired Apple Watch (unlock watch, keep it near iPhone)..." >&2
+  echo "==> Waiting for Apple Watch devicectl tunnel (unlock watch, on wrist, near iPhone)..." >&2
   for ((i = 1; i <= attempts; i++)); do
-    device_id="$(resolve_watch_core_device_id "$watch_name")"
+    device_id="$(resolve_watch_core_device_id "$watch_name" 1)"
     if [[ -n "$device_id" ]]; then
       echo "$device_id"
       return 0
     fi
+    if (( i == 1 || i % 5 == 0 )); then
+      echo "    still waiting for watch tunnel... ($i/$attempts)" >&2
+      describe_watch_devices >&2
+    fi
     sleep 2
   done
   return 1
+}
+
+wake_iphone_companion() {
+  local core_device_id="$1"
+  echo "==> Launching iPhone app to wake companion link"
+  xcrun devicectl device process launch \
+    --device "$core_device_id" \
+    com.golfmapapp.golfMapFlutter 2>/dev/null || true
+  sleep 3
+}
+
+try_install_watch_app() {
+  local watch_core_device_id="$1"
+  local watch_app="$2"
+  if [[ -z "$watch_core_device_id" || ! -d "$watch_app" ]]; then
+    return 1
+  fi
+  install_watch_app "$watch_core_device_id" "$watch_app"
 }
 
 resolve_built_runner_app() {
@@ -297,6 +355,17 @@ verify_runner_has_watch() {
     exit 1
   fi
   echo "Embedded watch build version: $watch_version"
+  local widget_appex
+  widget_appex=$(find "$watch_app/PlugIns" -maxdepth 1 -name '*.appex' 2>/dev/null | head -1)
+  if [[ -n "$widget_appex" ]]; then
+    local widget_version
+    widget_version=$(/usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$widget_appex/Info.plist" 2>/dev/null || true)
+    if [[ -z "$widget_version" ]]; then
+      echo "ERROR: Watch widget extension is missing CFBundleVersion at $widget_appex" >&2
+      exit 1
+    fi
+    echo "Embedded watch widget version: $widget_version"
+  fi
 }
 
 install_runner_app() {
@@ -311,10 +380,49 @@ install_runner_app() {
 install_watch_app() {
   local watch_core_device_id="$1"
   local watch_app="$2"
+  local attempt
   echo "==> Installing watch app via devicectl"
-  xcrun devicectl device install app \
-    --device "$watch_core_device_id" \
-    "$watch_app"
+  for attempt in 1 2 3; do
+    if xcrun devicectl device install app \
+      --device "$watch_core_device_id" \
+      "$watch_app"; then
+      return 0
+    fi
+    if [[ "$attempt" -lt 3 ]]; then
+      echo "    watch install attempt $attempt failed; retrying in 5s..." >&2
+      sleep 5
+    fi
+  done
+  return 1
+}
+
+print_watch_install_fallback() {
+  echo "==> Could not install directly to Apple Watch."
+  echo "    This is NOT a build failure — the watch app is embedded in the iPhone app."
+  echo ""
+  echo "    What happened:"
+  echo "    devicectl could not open a network tunnel to your watch"
+  echo "    (CoreDeviceError 4000 / RemotePairingError 1001)."
+  echo "    Your Mac sees the watch as paired but tunnel=disconnected."
+  echo "    The iPhone installs over USB; the watch needs Wi‑Fi/local network."
+  echo ""
+  echo "    Fix the tunnel (for direct Mac → Watch install):"
+  echo "    1. Unlock Apple Watch, keep it on your wrist, near the iPhone"
+  echo "    2. Mac, iPhone, and Watch on the SAME Wi‑Fi network"
+  echo "    3. iPhone: Settings → Wi‑Fi ON, Bluetooth ON"
+  echo "    4. iPhone Watch app → your watch → General → Developer Mode ON"
+  echo "    5. Quit Xcode, unplug/replug iPhone, re-run this script"
+  echo ""
+  echo "    Or install without the Mac → Watch tunnel (usually easiest):"
+  echo "    iPhone Watch app → General → South Texas Golf Tracker"
+  echo "    → turn ON \"Show App on Apple Watch\""
+  echo "    (iPhone pushes the embedded watch build to the watch over Bluetooth.)"
+  echo ""
+  echo "    Or in Xcode: Runner scheme → iPhone destination → Run (⌘R)"
+  echo ""
+  echo "    Skip the 90s watch wait next time:"
+  echo "      ./tool/install_ios_with_watch.sh $DEVICE_NAME --phone-only"
+  describe_watch_devices
 }
 
 DEVICE_ID="$(resolve_device_id "$DEVICE_NAME")"
@@ -387,27 +495,57 @@ fi
 install_runner_app "$CORE_DEVICE_ID" "$RUNNER_APP"
 
 WATCH_APP="$RUNNER_APP/Watch/GolfMapWatch.app"
-WATCH_CORE_DEVICE_ID="$(wait_for_watch_device "$WATCH_NAME" 20 || true)"
-if [[ -n "$WATCH_CORE_DEVICE_ID" && -d "$WATCH_APP" ]]; then
-  install_watch_app "$WATCH_CORE_DEVICE_ID" "$WATCH_APP"
+WATCH_INSTALLED=0
+
+if [[ "$PHONE_ONLY" -eq 1 ]]; then
+  echo "==> Skipping direct watch install (--phone-only)"
+  wake_iphone_companion "$CORE_DEVICE_ID"
+elif [[ -d "$WATCH_APP" ]]; then
+  wake_iphone_companion "$CORE_DEVICE_ID"
+
+  WATCH_CORE_DEVICE_ID="$(wait_for_watch_device "$WATCH_NAME" 30 || true)"
+  if [[ -n "$WATCH_CORE_DEVICE_ID" ]]; then
+    if try_install_watch_app "$WATCH_CORE_DEVICE_ID" "$WATCH_APP"; then
+      WATCH_INSTALLED=1
+    fi
+  fi
+
+  if [[ "$WATCH_INSTALLED" -eq 0 ]]; then
+    echo "==> Watch tunnel still not ready — retrying after companion wake-up..." >&2
+    wake_iphone_companion "$CORE_DEVICE_ID"
+    WATCH_CORE_DEVICE_ID="$(wait_for_watch_device "$WATCH_NAME" 20 || true)"
+    if [[ -z "$WATCH_CORE_DEVICE_ID" ]]; then
+      WATCH_CORE_DEVICE_ID="$(resolve_watch_core_device_id "$WATCH_NAME" 0)"
+      if [[ -n "$WATCH_CORE_DEVICE_ID" ]]; then
+        echo "    Found paired watch without tunnel; attempting install anyway..." >&2
+      fi
+    fi
+    if [[ -n "$WATCH_CORE_DEVICE_ID" ]]; then
+      if try_install_watch_app "$WATCH_CORE_DEVICE_ID" "$WATCH_APP"; then
+        WATCH_INSTALLED=1
+      fi
+    fi
+  fi
+
+  if [[ "$WATCH_INSTALLED" -eq 0 ]]; then
+    print_watch_install_fallback
+  fi
 else
-  echo "==> Could not install directly to Apple Watch."
-  echo "    Unlock your watch, keep it on your wrist near the iPhone, then run:"
-  echo "      ./tool/install_ios_with_watch.sh $DEVICE_NAME"
-  echo ""
-  echo "    Or on iPhone: Watch app → General → scroll to South Texas Golf Tracker"
-  echo "    → turn ON \"Show App on Apple Watch\"."
+  echo "ERROR: Watch app missing at $WATCH_APP" >&2
+  exit 1
 fi
 
-xcrun devicectl device process launch --device "$CORE_DEVICE_ID" com.golfmapapp.golfMapFlutter 2>/dev/null || true
+if [[ "$PHONE_ONLY" -eq 0 && "$WATCH_INSTALLED" -eq 0 ]]; then
+  wake_iphone_companion "$CORE_DEVICE_ID"
+elif [[ "$WATCH_INSTALLED" -eq 1 ]]; then
+  xcrun devicectl device process launch --device "$CORE_DEVICE_ID" com.golfmapapp.golfMapFlutter 2>/dev/null || true
+fi
 
 echo ""
 echo "Done. South Texas Golf Tracker should now be on your iPhone."
-if [[ -n "${WATCH_CORE_DEVICE_ID:-}" ]]; then
+if [[ "$WATCH_INSTALLED" -eq 1 ]]; then
   echo "Watch app installed directly — open South Texas Golf Tracker on your watch."
 else
-  echo "Watch app was NOT installed automatically."
-  echo "1. Unlock Apple Watch and keep it near your iPhone."
-  echo "2. Re-run: ./tool/install_ios_with_watch.sh $DEVICE_NAME"
-  echo "3. Or on iPhone: Watch app → find South Texas Golf Tracker → enable Show App on Apple Watch."
+  echo "Watch app was NOT installed directly (see notes above)."
+  echo "The embedded watch build is in the iPhone app — enable it from the Watch app on iPhone."
 fi
