@@ -7,9 +7,9 @@ struct RoundView: View {
 
     @Environment(LocationService.self) private var location
     @Environment(\.dismiss) private var dismiss
-    @AppStorage("autoAdvanceHoles") private var autoAdvance = true
-    @AppStorage("mapImagery") private var imagery = true
-    @AppStorage("keepScreenAwake") private var keepAwake = true
+    @AppStorage(SettingsKey.autoAdvanceHoles) private var autoAdvance = true
+    @AppStorage(SettingsKey.mapImagery) private var imagery = true
+    @AppStorage(SettingsKey.keepScreenAwake) private var keepAwake = true
     @State private var dockExpanded = false
     @State private var recenterToken = 0
     @State private var placingSimulatedLocation = false

@@ -14,7 +14,10 @@ struct GolfMapApp: App {
                 .environment(location)
                 .environment(rounds)
                 .tint(.golfBrand)
-                .task { await courses.load() }
+                .task {
+                    LegacyMigration().runIfNeeded(rounds: rounds)
+                    await courses.load()
+                }
         }
     }
 }

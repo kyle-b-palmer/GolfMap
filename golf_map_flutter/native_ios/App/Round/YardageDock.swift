@@ -10,13 +10,15 @@ struct YardageDock: View {
     @Binding var expanded: Bool
     let onMarkShot: () -> Void
 
+    @AppStorage(SettingsKey.clubBag) private var clubBagJSON = ""
+
     private var origin: Coordinate? { store.gpsOrigin(user) }
     private var yardages: GreenYardages? { store.yardages(from: origin) }
 
     private var suggestion: ClubSuggestion? {
         guard gps.allowsYardage, let middle = yardages?.middle, middle > 0 else { return nil }
         let onTee = origin.map { HoleGeometry.isOnTeeBox($0, store.hole.features) } ?? false
-        return ClubAdvisor.suggest(yards: middle, clubs: ClubDistance.defaultBag, allowDriver: onTee)
+        return ClubAdvisor.suggest(yards: middle, clubs: ClubDistance.decodeBag(clubBagJSON), allowDriver: onTee)
     }
 
     private var selectedPin: PinnedShot? {

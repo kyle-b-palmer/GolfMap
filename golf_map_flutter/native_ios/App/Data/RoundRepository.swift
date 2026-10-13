@@ -4,7 +4,6 @@ import Observation
 import os
 
 /// Active round and saved rounds, one JSON file each under Application Support.
-/// Legacy `SharedPreferences` rounds are imported in Phase 2.
 @Observable
 @MainActor
 final class RoundRepository {
@@ -34,16 +33,41 @@ final class RoundRepository {
 
     func finish(_ round: RoundState) {
         let saved = round.savedRound()
-        write(saved, to: directory.appending(path: "saved/\(saved.id).json"))
+        write(saved, to: savedURL(saved.id))
         savedRounds.removeAll { $0.id == saved.id }
         savedRounds.insert(saved, at: 0)
         discardActive()
     }
 
     func delete(_ round: SavedRound) {
-        try? FileManager.default.removeItem(at: directory.appending(path: "saved/\(round.id).json"))
+        try? FileManager.default.removeItem(at: savedURL(round.id))
         savedRounds.removeAll { $0.id == round.id }
     }
+
+    /// Writes rounds that don't exist yet, leaving native copies alone so a retried import changes nothing.
+    /// Returns how many were written.
+    @discardableResult
+    func importLegacy(_ rounds: [SavedRound]) -> Int {
+        var written = 0
+        for round in rounds where !FileManager.default.fileExists(atPath: savedURL(round.id).path) {
+            write(round, to: savedURL(round.id))
+            written += 1
+        }
+        savedRounds = Self.loadSaved(in: directory.appending(path: "saved"))
+        return written
+    }
+
+    func hasSavedRound(id: String) -> Bool {
+        FileManager.default.fileExists(atPath: savedURL(id).path)
+    }
+
+    /// Round IDs come from storage; percent-encoding keeps them inside the folder and distinct.
+    private func savedURL(_ id: String) -> URL {
+        let safe = id.addingPercentEncoding(withAllowedCharacters: Self.fileNameCharacters) ?? UUID().uuidString
+        return directory.appending(path: "saved/\(safe).json")
+    }
+
+    private static let fileNameCharacters = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
 
     private func write<Value: Encodable>(_ value: Value, to url: URL) {
         do {

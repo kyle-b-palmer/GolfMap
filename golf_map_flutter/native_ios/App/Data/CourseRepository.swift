@@ -3,7 +3,7 @@ import GolfCore
 import Observation
 import os
 
-/// Bundled course data. Remote and traced courses join this in Phase 6.
+/// Bundled courses plus courses the user traced or imported. Remote courses join this in Phase 6.
 @Observable
 @MainActor
 final class CourseRepository {
@@ -17,23 +17,38 @@ final class CourseRepository {
     private(set) var state: LoadState = .idle
     private(set) var features: [GolfFeature] = []
     private(set) var catalog: [CourseCatalogEntry] = []
+    private(set) var userCourseNames: [String] = []
 
-    private static let logger = Logger(subsystem: "com.golfmapapp.golfMapFlutter", category: "courses")
+    /// Traced-course rows in the bundled row format, appended after the bundled features like Flutter.
+    nonisolated static let defaultUserCoursesURL = URL.applicationSupportDirectory
+        .appending(path: "Courses/user-courses.json")
+
+    private let userCoursesURL: URL
+    private nonisolated static let logger = Logger(subsystem: "com.golfmapapp.golfMapFlutter", category: "courses")
+
+    init(userCoursesURL: URL = CourseRepository.defaultUserCoursesURL) {
+        self.userCoursesURL = userCoursesURL
+    }
 
     func load() async {
         guard state != .loading, state != .loaded else { return }
         state = .loading
         let started = ContinuousClock.now
+        let userCoursesURL = userCoursesURL
         do {
             let decoded = try await Task.detached(priority: .userInitiated) {
                 guard let url = Bundle.main.url(forResource: "san_antonio_courses", withExtension: "json") else {
                     throw CocoaError(.fileNoSuchFile)
                 }
-                let features = try FeatureRowDecoder.decode(Data(contentsOf: url))
-                return (features, CourseCatalog.build(features))
+                let bundled = try FeatureRowDecoder.decode(Data(contentsOf: url))
+                let user = Self.loadUserFeatures(at: userCoursesURL)
+                let features = bundled + user
+                let userNames = Set(user.compactMap(\.courseName).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty })
+                return (features, CourseCatalog.build(features), userNames.sorted())
             }.value
             features = decoded.0
             catalog = decoded.1
+            userCourseNames = decoded.2
             state = .loaded
             Self.logger.info("Loaded \(decoded.0.count) features, \(decoded.1.count) courses in \(ContinuousClock.now - started)")
         } catch {
@@ -48,5 +63,16 @@ final class CourseRepository {
 
     func entry(named name: String) -> CourseCatalogEntry? {
         catalog.first { $0.name == name }
+    }
+
+    /// A damaged user file shouldn't hide the bundled courses.
+    private nonisolated static func loadUserFeatures(at url: URL) -> [GolfFeature] {
+        guard let data = try? Data(contentsOf: url) else { return [] }
+        do {
+            return try FeatureRowDecoder.decode(data)
+        } catch {
+            logger.error("Traced courses unreadable: \(error.localizedDescription)")
+            return []
+        }
     }
 }
