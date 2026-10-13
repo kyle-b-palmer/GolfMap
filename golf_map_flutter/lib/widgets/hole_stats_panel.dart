@@ -16,7 +16,7 @@ class HoleStatsPanel extends StatelessWidget {
     this.clubSuggestion,
     this.playsLikeYards,
     this.yardsFromLastPin,
-    this.clubUsesAimTarget = false,
+    this.clubUsesPinTarget = false,
     this.onEditClubBag,
   });
 
@@ -26,7 +26,7 @@ class HoleStatsPanel extends StatelessWidget {
   final ClubSuggestion? clubSuggestion;
   final int? playsLikeYards;
   final int? yardsFromLastPin;
-  final bool clubUsesAimTarget;
+  final bool clubUsesPinTarget;
   final VoidCallback? onEditClubBag;
 
   @override
@@ -60,7 +60,7 @@ class HoleStatsPanel extends StatelessWidget {
           const SizedBox(height: 8),
           _ClubSuggestionBox(
             suggestion: clubSuggestion!,
-            usesAimTarget: clubUsesAimTarget,
+            usesPinTarget: clubUsesPinTarget,
             onEdit: onEditClubBag,
           ),
         ],
@@ -379,12 +379,12 @@ class _GpsGreenYardageBox extends StatelessWidget {
 class _ClubSuggestionBox extends StatelessWidget {
   const _ClubSuggestionBox({
     required this.suggestion,
-    this.usesAimTarget = false,
+    this.usesPinTarget = false,
     this.onEdit,
   });
 
   final ClubSuggestion suggestion;
-  final bool usesAimTarget;
+  final bool usesPinTarget;
   final VoidCallback? onEdit;
 
   @override
@@ -402,7 +402,7 @@ class _ClubSuggestionBox extends StatelessWidget {
       child: Column(
         children: [
           Text(
-            usesAimTarget ? 'CLUB·TGT' : 'CLUB',
+            usesPinTarget ? 'CLUB·PIN' : 'CLUB',
             style: TextStyle(
               color: AppTheme.textMuted.withValues(alpha: 0.9),
               fontSize: 7,

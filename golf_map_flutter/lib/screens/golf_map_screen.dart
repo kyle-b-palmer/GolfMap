@@ -142,7 +142,7 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
 
   ClubSuggestion? _clubSuggestion;
   int? _playsLikeMiddle;
-  bool _clubUsesAimTarget = false;
+  bool _clubUsesPinTarget = false;
   final Map<String, LatLng> _clubAimByHole = {};
   bool _clubAimPlacementMode = false;
   bool _gpsSimMode = false;
@@ -197,9 +197,12 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
 
   LatLng? get _clubSuggestionOrigin => _userCoord;
 
+  LatLng? get _clubSuggestionPinTarget =>
+      _lastTrackedPointForHole(_selectedHole);
+
   LatLng? get _clubSuggestionTarget {
-    final aimPoint = _clubAimPoint;
-    if (aimPoint != null) return aimPoint;
+    final pinTarget = _clubSuggestionPinTarget;
+    if (pinTarget != null) return pinTarget;
 
     return _greenCenter ?? greenCenterForHole(_currentHoleFeatures);
   }
@@ -1065,7 +1068,7 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
       setState(() {
         _playsLikeMiddle = null;
         _clubSuggestion = null;
-        _clubUsesAimTarget = false;
+        _clubUsesPinTarget = false;
       });
       return;
     }
@@ -1073,11 +1076,15 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
     final weather = await _weatherService.fetchForLocation(origin);
     if (!mounted) return;
 
-    final usesPlacedPoint = _clubAimPoint != null;
-    final int? actualYards = usesPlacedPoint
-        ? metersToYards(distanceMeters(origin, target))
+    final pinTarget = _clubSuggestionPinTarget;
+    final usesPinTarget = pinTarget != null;
+    final int? actualYards = usesPinTarget
+        ? metersToYards(distanceMeters(origin, pinTarget))
         : greenDistancesFromPoint(origin, holeFeatures).middle;
-    final bearing = bearingBetween(origin, target);
+    final bearing = bearingBetween(
+      origin,
+      usesPinTarget ? pinTarget : target,
+    );
 
     ClubSuggestion? suggestion;
     var playsLike = actualYards;
@@ -1100,7 +1107,7 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
     setState(() {
       _playsLikeMiddle = playsLike;
       _clubSuggestion = suggestion;
-      _clubUsesAimTarget = usesPlacedPoint;
+      _clubUsesPinTarget = usesPinTarget;
     });
   }
 
@@ -1859,16 +1866,7 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
   int? get _yardsFromUserToLastPin {
     if (_isCurrentHoleLocked || _userCoord == null) return null;
 
-    final pins = _sortedPinnedShotsForHole(_selectedHole)
-        .where((shot) => shot.pinType != PinType.lostBall)
-        .toList();
-    LatLng? target;
-    if (pins.isNotEmpty) {
-      final last = pins.last;
-      target = LatLng(last.latitude, last.longitude);
-    } else if (_lockedMeasurementPoints.isNotEmpty) {
-      target = _lockedMeasurementPoints.last.point;
-    }
+    final target = _clubSuggestionPinTarget;
     if (target == null) return null;
 
     final yards = metersToYards(distanceMeters(_userCoord!, target));
@@ -2974,7 +2972,7 @@ class _GolfMapScreenState extends State<GolfMapScreen> with WidgetsBindingObserv
                     playsLikeYards: _playsLikeMiddle,
                     yardsFromLastPin: _yardsFromUserToLastPin,
                     clubSuggestion: _clubSuggestion,
-                    clubUsesAimTarget: _clubUsesAimTarget,
+                    clubUsesPinTarget: _clubUsesPinTarget,
                     onEditClubBag: _openClubBagEditor,
                   ),
                   if (_holes.length > 1) ...[

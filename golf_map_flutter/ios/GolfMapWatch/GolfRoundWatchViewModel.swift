@@ -20,6 +20,7 @@ final class GolfRoundWatchViewModel: ObservableObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] yards in
                 self?.yardsToGreen = yards
+                self?.updateSwingDetection(for: self?.state)
             }
             .store(in: &cancellables)
 
@@ -202,6 +203,11 @@ final class GolfRoundWatchViewModel: ObservableObject {
 
     private func updateSwingDetection(for loaded: GolfRoundSharedState?) {
         guard let loaded, loaded.isActiveRound else {
+            stopSwingDetection()
+            return
+        }
+
+        if isPuttMode {
             stopSwingDetection()
             return
         }

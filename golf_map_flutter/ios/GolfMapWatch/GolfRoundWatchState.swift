@@ -7,17 +7,21 @@ struct GolfRoundGpsPin: Codable, Equatable {
     let latitude: Double
     let longitude: Double
     var pinKind: String?
+    /// Links this GPS pin to a Plotter-compatible IMU session transferred separately.
+    var imuSessionId: String?
 
     init(
         hole: String,
         latitude: Double,
         longitude: Double,
-        pinKind: String? = nil
+        pinKind: String? = nil,
+        imuSessionId: String? = nil
     ) {
         self.hole = hole
         self.latitude = latitude
         self.longitude = longitude
         self.pinKind = pinKind
+        self.imuSessionId = imuSessionId
     }
 
     init(from decoder: Decoder) throws {
@@ -26,6 +30,7 @@ struct GolfRoundGpsPin: Codable, Equatable {
         latitude = try container.decode(Double.self, forKey: .latitude)
         longitude = try container.decode(Double.self, forKey: .longitude)
         pinKind = try container.decodeIfPresent(String.self, forKey: .pinKind)
+        imuSessionId = try container.decodeIfPresent(String.self, forKey: .imuSessionId)
     }
 }
 
@@ -579,13 +584,14 @@ final class GolfRoundWatchStore {
         save(state)
     }
 
-  /// Records a detected full swing: pins GPS, increments score, and dedupes
+    /// Records a detected full swing: pins GPS, increments score, and dedupes
   /// additional swings within 25 yards on the same hole (practice swings).
     @discardableResult
     func recordDetectedSwing(
         hole: String,
         latitude: Double,
-        longitude: Double
+        longitude: Double,
+        imuSessionId: String? = nil
     ) -> GolfRoundSharedState? {
         guard var state = load(), state.isActiveRound else { return nil }
 
@@ -600,7 +606,8 @@ final class GolfRoundWatchStore {
         let pin = GolfRoundGpsPin(
             hole: hole,
             latitude: latitude,
-            longitude: longitude
+            longitude: longitude,
+            imuSessionId: imuSessionId
         )
 
         state.pendingGpsPinUndos.removeAll { $0.hole == hole }

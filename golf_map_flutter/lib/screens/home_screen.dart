@@ -16,6 +16,7 @@ import '../services/round_live_activity_service.dart';
 import '../services/round_storage_service.dart';
 import '../widgets/course_catalog_list.dart';
 import 'club_bag_screen.dart';
+import 'course_trace_screen.dart';
 import 'golf_map_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -33,6 +34,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final _appPrefs = AppPreferencesService();
 
   List<CourseCatalogEntry> _courseCatalog = [];
+  List<String> _userCourseNames = [];
   List<CommonlyVisitedEntry> _commonlyVisited = [];
   List<String> _favoriteCourses = [];
   List<SavedRound> _savedRounds = [];
@@ -68,6 +70,7 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       final features = await _dataService.fetchGolfFeatures();
       final catalog = _dataService.buildCourseCatalog(features);
+      final userCourses = await _dataService.fetchUserCourseNames();
       final rounds = await _roundStorage.loadRounds();
       final commonlyVisited =
           await _courseVisits.commonlyVisited(savedRounds: rounds);
@@ -82,6 +85,7 @@ class _HomeScreenState extends State<HomeScreen> {
       if (!mounted) return;
       setState(() {
         _courseCatalog = catalog;
+        _userCourseNames = userCourses;
         _commonlyVisited = commonlyVisited;
         _favoriteCourses = favorites;
         _savedRounds = rounds;
@@ -125,6 +129,67 @@ class _HomeScreenState extends State<HomeScreen> {
     await Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => const ClubBagScreen()),
     );
+  }
+
+  Future<void> _openCourseTracer({
+    String? existingCourseName,
+    String? seedCourseName,
+  }) async {
+    final saved = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => CourseTraceScreen(
+          existingCourseName: existingCourseName,
+          seedCourseName: seedCourseName,
+        ),
+      ),
+    );
+    if (saved == true && mounted) {
+      await _load();
+    }
+  }
+
+  Future<void> _editCourse(String courseName) async {
+    final normalized = courseName.trim();
+    if (normalized.isEmpty) return;
+
+    final localNames = await _dataService.fetchUserCourseNames();
+    final hasLocal = localNames.any((name) => name.trim() == normalized);
+    if (!mounted) return;
+
+    if (hasLocal) {
+      await _openCourseTracer(existingCourseName: normalized);
+    } else {
+      await _openCourseTracer(seedCourseName: normalized);
+    }
+  }
+
+  Future<void> _deleteUserCourse(String courseName) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1A22),
+        title: const Text('Delete traced course?'),
+        content: Text(
+          'Remove $courseName from this device? You can trace it again later.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text(
+              'Delete',
+              style: TextStyle(color: Color(0xFFEF4444)),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await _dataService.deleteUserCourse(courseName);
+    if (mounted) _load();
   }
 
   Future<void> _startRound(String course) async {
@@ -330,6 +395,7 @@ class _HomeScreenState extends State<HomeScreen> {
               catalog: _courseCatalog,
               onSelectCourse: _startRound,
               onToggleFavorite: _toggleFavorite,
+              onEditCourse: _editCourse,
             ),
           ],
           if (_commonlyVisited.isNotEmpty) ...[
@@ -341,6 +407,7 @@ class _HomeScreenState extends State<HomeScreen> {
               favoriteCourses: _favoriteCourses.toSet(),
               onSelectCourse: _startRound,
               onToggleFavorite: _toggleFavorite,
+              onEditCourse: _editCourse,
             ),
           ],
           _HomeActionCard(
@@ -349,6 +416,30 @@ class _HomeScreenState extends State<HomeScreen> {
             subtitle: 'Set carry distances for club suggestions on the course',
             onTap: _openClubBag,
           ),
+          const SizedBox(height: 12),
+          _HomeActionCard(
+            icon: Icons.edit_location_alt_rounded,
+            title: 'Trace a course',
+            subtitle:
+                'Load from database or OSM, edit hole by hole, then save or upload',
+            onTap: () => _openCourseTracer(),
+          ),
+          if (_userCourseNames.isNotEmpty) ...[
+            const SizedBox(height: 20),
+            const _SectionTitle(title: 'My traced courses'),
+            const SizedBox(height: 10),
+            ..._userCourseNames.map(
+              (course) => Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: _UserCourseCard(
+                  courseName: course,
+                  onPlay: () => _startRound(course),
+                  onEdit: () => _openCourseTracer(existingCourseName: course),
+                  onDelete: () => _deleteUserCourse(course),
+                ),
+              ),
+            ),
+          ],
           if (!kIsWeb && Platform.isIOS && _healthWorkoutAvailable) ...[
             const SizedBox(height: 12),
             _HealthWorkoutRoundToggle(
@@ -364,6 +455,7 @@ class _HomeScreenState extends State<HomeScreen> {
             favoriteCourses: _favoriteCourses.toSet(),
             onSelectCourse: _startRound,
             onToggleFavorite: _toggleFavorite,
+            onEditCourse: _editCourse,
           ),
           const SizedBox(height: 28),
           const _SectionTitle(title: 'Saved rounds'),
@@ -516,6 +608,70 @@ class _HomeActionCard extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _UserCourseCard extends StatelessWidget {
+  const _UserCourseCard({
+    required this.courseName,
+    required this.onPlay,
+    required this.onEdit,
+    required this.onDelete,
+  });
+
+  final String courseName;
+  final VoidCallback onPlay;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
+      decoration: BoxDecoration(
+        color: AppTheme.panelBg,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppTheme.panelBorder),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  courseName,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                const Text(
+                  'Traced on this device',
+                  style: TextStyle(color: AppTheme.textMuted, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            tooltip: 'Play',
+            onPressed: onPlay,
+            icon: const Icon(Icons.play_arrow_rounded, color: AppTheme.accentGreen),
+          ),
+          IconButton(
+            tooltip: 'Edit',
+            onPressed: onEdit,
+            icon: const Icon(Icons.edit_outlined, color: AppTheme.textMuted),
+          ),
+          IconButton(
+            tooltip: 'Delete',
+            onPressed: onDelete,
+            icon: const Icon(Icons.delete_outline, color: Color(0xFFEF4444)),
+          ),
+        ],
       ),
     );
   }

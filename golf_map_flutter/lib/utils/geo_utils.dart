@@ -46,6 +46,40 @@ List<LatLng> latLngRingFromCoords(List<dynamic> ring) {
       .toList();
 }
 
+bool latLngPointsEqual(LatLng a, LatLng b, {double epsilon = 1e-7}) {
+  return (a.latitude - b.latitude).abs() < epsilon &&
+      (a.longitude - b.longitude).abs() < epsilon;
+}
+
+/// Outer ring vertices without the closing duplicate point.
+List<LatLng> editableVerticesFromGeometry(Map<String, dynamic> geometry) {
+  final rings = ringsFromGeometry(geometry);
+  if (rings.isEmpty) return [];
+
+  final ring = List<LatLng>.from(rings.first);
+  if (ring.length >= 2 && latLngPointsEqual(ring.first, ring.last)) {
+    ring.removeLast();
+  }
+  return ring;
+}
+
+Map<String, dynamic> polygonGeometryFromVertices(List<LatLng> vertices) {
+  final ring = vertices
+      .map((point) => [point.longitude, point.latitude])
+      .toList();
+  if (ring.isNotEmpty) {
+    final first = ring.first;
+    final last = ring.last;
+    if (first[0] != last[0] || first[1] != last[1]) {
+      ring.add([first[0], first[1]]);
+    }
+  }
+  return {
+    'type': 'Polygon',
+    'coordinates': [ring],
+  };
+}
+
 List<List<LatLng>> ringsFromGeometry(Map<String, dynamic> geometry) {
   final type = geometry['type'] as String?;
   final coords = geometry['coordinates'];
@@ -529,13 +563,13 @@ double distanceOutsideHoleEncirclementMeters(
   for (var i = 0; i < ring.length; i++) {
     final a = ring[i];
     final b = ring[(i + 1) % ring.length];
-    final d = _distancePointToSegmentMeters(point, a, b);
+    final d = distancePointToSegmentMeters(point, a, b);
     if (d < minDist) minDist = d;
   }
   return minDist;
 }
 
-double _distancePointToSegmentMeters(LatLng p, LatLng a, LatLng b) {
+double distancePointToSegmentMeters(LatLng p, LatLng a, LatLng b) {
   final ab = distanceMeters(a, b);
   if (ab < 0.001) return distanceMeters(p, a);
 
@@ -552,6 +586,25 @@ double _distancePointToSegmentMeters(LatLng p, LatLng a, LatLng b) {
       math.sin(
         _bearingDiffRadians(bearingBetween(a, b), bearingBetween(a, p)),
       ).abs();
+}
+
+/// Insert [point] after the start vertex of the nearest polygon edge.
+int insertIndexOnPolygonRing(List<LatLng> vertices, LatLng point) {
+  if (vertices.isEmpty) return 0;
+  if (vertices.length == 1) return 1;
+
+  var bestEdge = 0;
+  var bestDistance = double.infinity;
+  for (var index = 0; index < vertices.length; index++) {
+    final start = vertices[index];
+    final end = vertices[(index + 1) % vertices.length];
+    final distance = distancePointToSegmentMeters(point, start, end);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestEdge = index;
+    }
+  }
+  return bestEdge + 1;
 }
 
 /// GPS is usable when inside the hole oval or only slightly outside it.

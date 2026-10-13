@@ -11,12 +11,14 @@ class CourseCatalogList extends StatefulWidget {
     required this.favoriteCourses,
     required this.onSelectCourse,
     required this.onToggleFavorite,
+    this.onEditCourse,
   });
 
   final List<CourseCatalogEntry> entries;
   final Set<String> favoriteCourses;
   final ValueChanged<String> onSelectCourse;
   final ValueChanged<String> onToggleFavorite;
+  final ValueChanged<String>? onEditCourse;
 
   @override
   State<CourseCatalogList> createState() => _CourseCatalogListState();
@@ -73,6 +75,9 @@ class _CourseCatalogListState extends State<CourseCatalogList> {
                 isFavorite: widget.favoriteCourses.contains(entry.name),
                 onToggleFavorite: () => widget.onToggleFavorite(entry.name),
                 onTap: () => widget.onSelectCourse(entry.name),
+                onEdit: widget.onEditCourse == null
+                    ? null
+                    : () => widget.onEditCourse!(entry.name),
               ),
             ),
           )
@@ -116,6 +121,9 @@ class _CourseCatalogListState extends State<CourseCatalogList> {
                                     widget.onToggleFavorite(course.name),
                                 onTap: () =>
                                     widget.onSelectCourse(course.name),
+                                onEdit: widget.onEditCourse == null
+                                    ? null
+                                    : () => widget.onEditCourse!(course.name),
                               ),
                             )
                             .toList(),
@@ -231,12 +239,14 @@ class _CourseListTile extends StatelessWidget {
     required this.isFavorite,
     required this.onToggleFavorite,
     required this.onTap,
+    this.onEdit,
   });
 
   final String course;
   final bool isFavorite;
   final VoidCallback onToggleFavorite;
   final VoidCallback onTap;
+  final VoidCallback? onEdit;
 
   static const _leftIndent =
       _CatalogExpansionTile._baseIndent + _CatalogExpansionTile._indentStep * 2;
@@ -249,7 +259,7 @@ class _CourseListTile extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(10),
         child: Padding(
-          padding: EdgeInsets.fromLTRB(_leftIndent, 6, 12, 6),
+          padding: EdgeInsets.fromLTRB(_leftIndent, 6, 4, 6),
           child: Row(
             children: [
               Container(
@@ -276,6 +286,19 @@ class _CourseListTile extends StatelessWidget {
                   ),
                 ),
               ),
+              if (onEdit != null)
+                IconButton(
+                  tooltip: 'Edit course map',
+                  onPressed: onEdit,
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                  icon: const Icon(
+                    Icons.edit_outlined,
+                    color: AppTheme.textMuted,
+                    size: 20,
+                  ),
+                ),
               _FavoriteStarButton(
                 isFavorite: isFavorite,
                 onPressed: onToggleFavorite,
@@ -301,12 +324,14 @@ class FavoritesSection extends StatelessWidget {
     required this.catalog,
     required this.onSelectCourse,
     required this.onToggleFavorite,
+    this.onEditCourse,
   });
 
   final List<String> favoriteCourses;
   final List<CourseCatalogEntry> catalog;
   final ValueChanged<String> onSelectCourse;
   final ValueChanged<String> onToggleFavorite;
+  final ValueChanged<String>? onEditCourse;
 
   @override
   Widget build(BuildContext context) {
@@ -331,6 +356,9 @@ class FavoritesSection extends StatelessWidget {
               isFavorite: true,
               onToggleFavorite: () => onToggleFavorite(courseName),
               onTap: () => onSelectCourse(courseName),
+              onEdit: onEditCourse == null
+                  ? null
+                  : () => onEditCourse!(courseName),
             ),
           );
         }),
@@ -373,6 +401,7 @@ class CommonlyVisitedSection extends StatelessWidget {
     required this.favoriteCourses,
     required this.onSelectCourse,
     required this.onToggleFavorite,
+    this.onEditCourse,
   });
 
   final List<CommonlyVisitedEntry> entries;
@@ -380,6 +409,7 @@ class CommonlyVisitedSection extends StatelessWidget {
   final Set<String> favoriteCourses;
   final ValueChanged<String> onSelectCourse;
   final ValueChanged<String> onToggleFavorite;
+  final ValueChanged<String>? onEditCourse;
 
   @override
   Widget build(BuildContext context) {
@@ -405,6 +435,9 @@ class CommonlyVisitedSection extends StatelessWidget {
               isFavorite: favoriteCourses.contains(entry.courseName),
               onToggleFavorite: () => onToggleFavorite(entry.courseName),
               onTap: () => onSelectCourse(entry.courseName),
+              onEdit: onEditCourse == null
+                  ? null
+                  : () => onEditCourse!(entry.courseName),
             ),
           );
         }),
@@ -421,6 +454,7 @@ class _CourseResultCard extends StatelessWidget {
     required this.isFavorite,
     required this.onToggleFavorite,
     required this.onTap,
+    this.onEdit,
   });
 
   final String title;
@@ -428,12 +462,14 @@ class _CourseResultCard extends StatelessWidget {
   final bool isFavorite;
   final VoidCallback onToggleFavorite;
   final VoidCallback onTap;
+  final VoidCallback? onEdit;
 
   factory _CourseResultCard.fromCatalog({
     required CourseCatalogEntry entry,
     required bool isFavorite,
     required VoidCallback onToggleFavorite,
     required VoidCallback onTap,
+    VoidCallback? onEdit,
   }) {
     return _CourseResultCard(
       title: entry.name,
@@ -441,6 +477,7 @@ class _CourseResultCard extends StatelessWidget {
       isFavorite: isFavorite,
       onToggleFavorite: onToggleFavorite,
       onTap: onTap,
+      onEdit: onEdit,
     );
   }
 
@@ -453,7 +490,7 @@ class _CourseResultCard extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(14),
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+          padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(14),
             border: Border.all(color: AppTheme.panelBorder),
@@ -497,6 +534,15 @@ class _CourseResultCard extends StatelessWidget {
                   ],
                 ),
               ),
+              if (onEdit != null)
+                IconButton(
+                  tooltip: 'Edit course map',
+                  onPressed: onEdit,
+                  icon: const Icon(
+                    Icons.edit_outlined,
+                    color: AppTheme.textMuted,
+                  ),
+                ),
               _FavoriteStarButton(
                 isFavorite: isFavorite,
                 onPressed: onToggleFavorite,
