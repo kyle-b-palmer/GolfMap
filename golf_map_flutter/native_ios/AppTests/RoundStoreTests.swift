@@ -80,4 +80,67 @@ struct RoundStoreTests {
         #expect(repository.savedRounds.first?.lockedHoles.count == store.round.holes.count)
         #expect(shared.load() == nil)
     }
+
+    @Test func autoAdvanceWaitsOnTheGreenAndStopsOnTheLastHole() throws {
+        let store = makeStore()
+        let start = Date(timeIntervalSince1970: 1_000)
+        let green = try #require(store.hole.green)
+        store.locationChanged(green, autoAdvanceEnabled: true, now: start)
+        store.locationChanged(green, autoAdvanceEnabled: true, now: start.addingTimeInterval(12))
+        #expect(store.round.selectedHole == "1", "needs more than 12 seconds")
+        store.locationChanged(green, autoAdvanceEnabled: true, now: start.addingTimeInterval(12.5))
+        #expect(store.round.selectedHole == "2")
+        #expect(store.banner == "Advanced to hole 2")
+
+        let last = try #require(store.round.holes.last)
+        store.send(.selectHole(last))
+        let lastGreen = try #require(store.hole.green)
+        store.locationChanged(lastGreen, autoAdvanceEnabled: true, now: start)
+        store.locationChanged(lastGreen, autoAdvanceEnabled: true, now: start.addingTimeInterval(60))
+        #expect(store.round.selectedHole == last)
+    }
+
+    @Test func interruptedRoundRestoresFromDisk() throws {
+        let store = makeStore()
+        store.activate()
+        store.send(.setScore(hole: "1", strokes: 5))
+        store.send(.setPutts(hole: "1", putts: 2))
+        store.send(.setLocked(hole: "1", locked: true))
+        store.send(.setScoreTarget(80))
+        store.send(.selectHole("2"))
+        store.deactivate()
+
+        let restored = try #require(RoundRepository(directory: folder).activeRound)
+        #expect(restored == store.round)
+        #expect(restored.selectedHole == "2")
+        #expect(restored.scoreTarget == 80)
+        #expect(restored.lockedHoles == ["1"])
+    }
+
+    @Test func reopeningASavedRoundKeepsItsIdentityAndDate() throws {
+        let first = makeStore()
+        first.activate()
+        first.send(.setScore(hole: "1", strokes: 4))
+        first.finish()
+        let saved = try #require(RoundRepository(directory: folder).savedRounds.first)
+
+        let repository = RoundRepository(directory: folder)
+        let reopened = RoundStore(
+            round: RoundState.reopen(saved, features: features),
+            courseFeatures: features,
+            repository: repository,
+            shared: shared
+        )
+        reopened.activate()
+        #expect(reopened.round.lockedHoles.count == reopened.round.holes.count, "saved rounds reopen locked")
+        reopened.send(.setLocked(hole: "1", locked: false))
+        reopened.send(.setScore(hole: "1", strokes: 6))
+        reopened.finish()
+
+        let rounds = RoundRepository(directory: folder).savedRounds
+        #expect(rounds.count == 1)
+        #expect(rounds.first?.id == saved.id)
+        #expect(rounds.first?.playedAt == saved.playedAt)
+        #expect(rounds.first?.scores["1"] == 6)
+    }
 }

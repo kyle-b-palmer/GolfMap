@@ -11,6 +11,9 @@ struct YardageDock: View {
     let onMarkShot: () -> Void
 
     @AppStorage(SettingsKey.clubBag) private var clubBagJSON = ""
+    @AppStorage(SettingsKey.showScoreTarget) private var showScoreTarget = true
+    @State private var sheet: DockSheet?
+    @Environment(\.openURL) private var openURL
 
     private var origin: Coordinate? { store.gpsOrigin(user) }
     private var yardages: GreenYardages? { store.yardages(from: origin) }
@@ -18,6 +21,16 @@ struct YardageDock: View {
     private var advice: ShotAdvice? {
         guard gps.allowsYardage else { return nil }
         return store.shotAdvice(from: origin, clubs: ClubDistance.decodeBag(clubBagJSON))
+    }
+
+    /// Why yardage is hidden and what to do about it; nil when a usable fix is available or still expected.
+    private var gpsRecovery: String? {
+        switch gps {
+        case .denied: "Allow location access to see yardages."
+        case .reducedAccuracy: "Turn on Precise Location for accurate yardages."
+        case .stale: "Waiting for a GPS update. Yardages return with the next fix."
+        default: nil
+        }
     }
 
     private var selectedPin: PinnedShot? {
@@ -29,7 +42,22 @@ struct YardageDock: View {
             handle
             YardageReadout(middle: yardages?.middle, front: yardages?.front, back: yardages?.back, gps: gps)
             Group {
-                if user != nil, origin == nil {
+                if let recovery = gpsRecovery {
+                    HStack(spacing: GolfSpacing.s) {
+                        Text(recovery)
+                            .font(.callout.weight(.semibold))
+                            .foregroundStyle(.golfSecondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if gps == .denied || gps == .reducedAccuracy {
+                            Spacer(minLength: 0)
+                            Button("Settings") {
+                                if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+                            }
+                            .buttonStyle(.bordered)
+                            .accessibilityHint("Opens Golf Map's location settings")
+                        }
+                    }
+                } else if user != nil, origin == nil {
                     Label("More than 1,200 yd from hole \(store.round.selectedHole)", systemImage: "location.slash")
                         .font(.callout.weight(.semibold))
                         .foregroundStyle(.golfSecondaryText)
@@ -58,6 +86,7 @@ struct YardageDock: View {
                     isEnabled: !store.round.isCurrentHoleLocked
                 )
             }
+            roundSummary
             actionRow
             if expanded {
                 details
@@ -176,20 +205,66 @@ struct YardageDock: View {
                     }
                 }
             }
-
-            HStack {
-                Text("Round")
-                Spacer()
-                Text("\(store.round.totalScore) strokes · \(relative(store.round.totalRelativeToPar))")
-                    .monospacedDigit()
-            }
-            .font(.subheadline.weight(.semibold))
-            .foregroundStyle(.golfSecondaryText)
         }
         .font(.subheadline)
     }
 
-    private func relative(_ value: Int) -> String {
-        value == 0 ? "E" : value > 0 ? "+\(value)" : "\(value)"
+    /// Strokes left for the target (Flutter's "LEFT n FOR m TO PLAY") and the round total, which opens the scorecard.
+    private var roundSummary: some View {
+        let round = store.round
+        return HStack(spacing: GolfSpacing.s) {
+            if showScoreTarget {
+                Button { sheet = .target } label: {
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text("\(round.strokesRemainingForTarget) left for \(round.holesToPlay) to play")
+                            .font(.subheadline.weight(.semibold).monospacedDigit())
+                        Text(round.scoreTarget == nil ? "Target par \(round.effectiveScoreTarget)" : "Target \(round.effectiveScoreTarget)")
+                            .font(.caption)
+                            .foregroundStyle(.golfSecondaryText)
+                    }
+                    .frame(minHeight: GolfMetrics.minimumHitTarget)
+                    .contentShape(Rectangle())
+                }
+                .foregroundStyle(.golfPrimaryText)
+                .accessibilityLabel("\(round.strokesRemainingForTarget) strokes left for target \(round.effectiveScoreTarget), \(round.holesToPlay) holes to play")
+                .accessibilityHint("Changes the score target")
+            }
+            Spacer(minLength: 0)
+            Button { sheet = .scorecard } label: {
+                HStack(spacing: GolfSpacing.xxs) {
+                    Text("Total \(round.totalScore)")
+                    if round.coursePar > 0 {
+                        Text(formatRelativeToPar(round.totalRelativeToPar)).foregroundStyle(.golfSecondaryText)
+                    }
+                    Image(systemName: "list.number").accessibilityHidden(true)
+                }
+                .font(.subheadline.weight(.semibold).monospacedDigit())
+                .frame(minHeight: GolfMetrics.minimumHitTarget)
+                .contentShape(Rectangle())
+            }
+            .foregroundStyle(.golfPrimaryText)
+            .accessibilityLabel("Total \(round.totalScore), \(formatRelativeToPar(round.totalRelativeToPar))")
+            .accessibilityHint("Shows the scorecard")
+        }
+        .sheet(item: $sheet) { sheet in
+            NavigationStack {
+                switch sheet {
+                case .target:
+                    ScoreTargetSheet(coursePar: round.coursePar, current: round.effectiveScoreTarget) {
+                        store.send(.setScoreTarget($0))
+                    }
+                case .scorecard:
+                    RoundScorecardSheet(round: store.round)
+                }
+            }
+            .presentationDetents(sheet == .target ? [.medium] : [.medium, .large])
+        }
     }
+}
+
+private enum DockSheet: String, Identifiable {
+    case target
+    case scorecard
+
+    var id: String { rawValue }
 }

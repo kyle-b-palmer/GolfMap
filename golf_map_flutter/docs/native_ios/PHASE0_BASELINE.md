@@ -116,7 +116,9 @@ Each item must exist natively, or be explicitly dropped, before cutover.
 | Main-screen design | Active-round layout from the plan: header, yardage dock, selection bar, placement banner. The dock is a custom bottom panel rather than a system sheet, because a presented sheet blocks other presentations such as the End Round dialog. |
 | Hole framing | Measure where the tee and green land after the first camera guess and correct, so the hole fits whatever space the dock leaves (dock size changes with Dynamic Type) |
 | Offline rendering | Course overlays must render without map tiles |
-| Unfinished round | Persist after every action and offer to resume on launch |
+| Unfinished round | Persist after every action. At launch, reopen it automatically if it changed in the last 12 hours; older rounds wait behind Resume on Home |
+| Saving a round | Locks every course hole, including unscored ones, as Flutter does. Reopening a saved round keeps its ID and date and replaces the saved file |
+| Score target | Flutter kept it in screen state, so it reset when the round reopened. The port stores it in the round (`nil` follows course par) |
 | Watch protocol v2 | Additive: optional `eventId` and `protocolVersion`; v1 peers fall back to proximity matching |
 | GPS simulation | Hidden behind Developer settings |
 | Upload semantics | Unchanged from Flutter until Phase 6 |
@@ -144,6 +146,7 @@ These are current behavior, not intended product rules. The port reproduces them
 Fixed in the port (no fixture depends on them):
 
 - An identified remote undo whose pin was already gone fell back to proximity and could delete a different pin. It now matches by event ID only.
+- Auto-advance on the final green wrapped to hole 1 after 12 seconds, moving a player who was still putting out. It now stops on the final hole; the Next button still wraps.
 
 ## Pending device work
 
@@ -152,4 +155,5 @@ Fixed in the port (no fixture depends on them):
 - Outdoor review of the Phase 1 yardage dock.
 - Paired Watch checks for sync, pin transfer, and complications.
 - Supabase: `xycsxghpvylyquigzdje.supabase.co` did not resolve on 2026-10-13 (likely a paused project). The bundled data covers every current course, but the remote fallback and course uploads need the project restored before they can be checked live.
-- Seed a Flutter install with saved rounds, traced courses, and settings, then install the native build over it and check the import in the UI.
+- Seed a Flutter install with saved rounds, traced courses, and settings, then install the native build over it and check the import in the UI. In the simulator, `scripts/seed_legacy_round.sh` has confirmed a Flutter-format round imports and opens on the scorecard; the device check still needs a real Flutter install.
+- Location states on device: deny access, turn off Precise Location, and walk out of coverage to confirm the dock's Searching, Approximate, GPS lost, and Location off states and their recovery text. Auto-advance (more than 12 seconds inside the green) needs an outdoor check for jitter at the green edge and on the last hole.

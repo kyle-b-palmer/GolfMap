@@ -206,16 +206,18 @@ final class RoundStore {
     }
 
     /// Called for each new fix: keeps the shared yardage current, refreshes weather, and runs auto-advance.
-    func locationChanged(_ user: Coordinate?, autoAdvanceEnabled: Bool) {
+    /// Auto-advance skips one-hole courses (as Flutter does) and stops on the final hole rather than wrapping to the first.
+    func locationChanged(_ user: Coordinate?, autoAdvanceEnabled: Bool, now: Date = .now) {
         let origin = gpsOrigin(user)
         let yards = yardages(from: origin)?.middle
         if yards != lastPublishedYards {
             publish(yardsToGreen: yards)
         }
         if let origin { refreshWeather(at: origin) }
-        guard autoAdvanceEnabled, let user else { return }
-        if autoAdvance.update(onGreen: HoleGeometry.isPointInGreen(user, hole.features), now: .now) {
+        guard autoAdvanceEnabled, let user, round.holes.count > 1, round.selectedHole != round.holes.last else { return }
+        if autoAdvance.update(onGreen: HoleGeometry.isPointInGreen(user, hole.features), now: now) {
             send(.nextHole)
+            show("Advanced to hole \(round.selectedHole)")
         }
     }
 

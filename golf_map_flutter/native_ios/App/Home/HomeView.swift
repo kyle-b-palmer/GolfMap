@@ -15,6 +15,10 @@ struct HomeView: View {
     @State private var courseToDelete: String?
     @State private var sheet: HomeSheet?
     @State private var favoriteLimitAlert = false
+    @State private var checkedRestore = false
+
+    /// An interrupted round reopens by itself at launch only if it changed this recently; older ones wait on Resume.
+    private static let restoreWindow: TimeInterval = 12 * 60 * 60
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -40,6 +44,16 @@ struct HomeView: View {
                 case .clubBag: ClubBagView()
                 case .settings: SettingsView()
                 }
+            }
+        }
+        .onChange(of: courses.state == .loaded, initial: true) { _, loaded in
+            guard loaded, !checkedRestore else { return }
+            checkedRestore = true
+            #if DEBUG
+            if UserDefaults.standard.string(forKey: "GolfMapOpenCourse") != nil || UserDefaults.standard.string(forKey: "GolfMapHomeRoute") != nil { return }
+            #endif
+            if let active = rounds.activeRound, let savedAt = rounds.activeRoundSavedAt, Date.now.timeIntervalSince(savedAt) < Self.restoreWindow {
+                open(active, isNewVisit: false)
             }
         }
         #if DEBUG
@@ -316,8 +330,8 @@ struct HomeView: View {
         }
     }
 
-    private func open(_ round: RoundState) {
-        library.recordVisit(round.courseName)
+    private func open(_ round: RoundState, isNewVisit: Bool = true) {
+        if isNewVisit { library.recordVisit(round.courseName) }
         path = NavigationPath()
         activeRound = RoundStore(round: round, courseFeatures: courses.features(for: round.courseName), repository: rounds)
     }

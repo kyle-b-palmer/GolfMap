@@ -57,6 +57,13 @@ final class RoundRepository {
         return written
     }
 
+    /// When the active round last changed, for deciding whether to restore it at launch.
+    var activeRoundSavedAt: Date? {
+        guard activeRound != nil else { return nil }
+        let attributes = try? FileManager.default.attributesOfItem(atPath: directory.appending(path: "active-round.json").path)
+        return attributes?[.modificationDate] as? Date
+    }
+
     func hasSavedRound(id: String) -> Bool {
         FileManager.default.fileExists(atPath: savedURL(id).path)
     }
