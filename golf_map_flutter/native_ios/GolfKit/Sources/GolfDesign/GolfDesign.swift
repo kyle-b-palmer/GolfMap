@@ -112,6 +112,9 @@ public enum GolfMapPalette {
     public static let selection = RGB(hex: 0xFFD54F)
     public static let aimLine = RGB(hex: 0x0EA5E9)
     public static let measureLine = RGB(hex: 0x4A9EFF)
+    public static let idealLine = RGB(hex: 0xE53935)
+    public static let clubAim = RGB(hex: 0x7DD3FC)
+    public static let dispersion = RGB(hex: 0x22C55E)
 
     /// Active and inactive fill opacity for a feature type.
     public static func fill(for featureType: String) -> (color: RGB, active: Double, inactive: Double)? {

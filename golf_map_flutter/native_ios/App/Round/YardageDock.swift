@@ -9,6 +9,7 @@ struct YardageDock: View {
     let user: Coordinate?
     @Binding var expanded: Bool
     let onMarkShot: () -> Void
+    let onLostBall: () -> Void
 
     @AppStorage(SettingsKey.clubBag) private var clubBagJSON = ""
     @AppStorage(SettingsKey.showScoreTarget) private var showScoreTarget = true
@@ -122,6 +123,7 @@ struct YardageDock: View {
 
     @ViewBuilder
     private var actionRow: some View {
+        let chain = store.displayChain(user: user)
         if let pin = selectedPin {
             SelectionBar(
                 title: pin.pinType == .lostBall ? "Lost ball · shot \(pin.shotNumber)" : "Shot \(pin.shotNumber)",
@@ -129,14 +131,63 @@ struct YardageDock: View {
                 onDelete: { store.send(.deletePin(hole: store.round.selectedHole, id: pin.id)) },
                 onDone: { store.selectedPinID = nil }
             )
+        } else if let index = store.selectedChainIndex, chain.indices.contains(index) {
+            SelectionBar(
+                title: "Measure point \(index + 1)",
+                detail: chainDetail(chain, index: index),
+                onDelete: { store.deleteChainPoint(index, user: user) },
+                onDone: { store.selectedChainIndex = nil }
+            )
         } else {
-            Button(action: onMarkShot) {
-                Label("Mark shot", systemImage: "mappin.and.ellipse")
+            if !chain.isEmpty { measureBar(chain) }
+            HStack(spacing: GolfSpacing.s) {
+                Button(action: onMarkShot) {
+                    Label("Mark shot", systemImage: "mappin.and.ellipse")
+                }
+                .buttonStyle(.golfPrimary)
+                .disabled(origin == nil || store.round.isCurrentHoleLocked)
+                .accessibilityHint(origin == nil ? "Available within 1,200 yards of the hole" : "Pins your current location as the next shot")
+
+                Button(action: onLostBall) {
+                    Label("Lost ball", systemImage: "questionmark.circle")
+                        .font(.body.weight(.semibold))
+                        .frame(minHeight: GolfMetrics.minimumHitTarget)
+                }
+                .buttonStyle(.bordered)
+                .tint(GolfPalette.destructive.color)
+                .disabled(user == nil || store.round.isCurrentHoleLocked)
+                .accessibilityHint("Pins a lost ball here and adds a penalty stroke")
             }
-            .buttonStyle(.golfPrimary)
-            .disabled(origin == nil || store.round.isCurrentHoleLocked)
-            .accessibilityHint(origin == nil ? "Available within 1,200 yards of the hole" : "Pins your current location as the next shot")
         }
+    }
+
+    /// Tap-to-measure summary: each segment, then what's left to the green.
+    private func measureBar(_ chain: [MeasurementChainPoint]) -> some View {
+        let segments = chain.map { "\($0.segmentYards)" }.joined(separator: " + ")
+        let toGreen = chain.last.flatMap { last in store.hole.green.map { GeoMath.yardsBetween(last.coordinate, $0) } }
+        return HStack(spacing: GolfSpacing.s) {
+            Image(systemName: "ruler").foregroundStyle(.golfMeasure).accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 0) {
+                Text("\(segments) yd").font(.subheadline.weight(.semibold).monospacedDigit())
+                if let toGreen {
+                    Text("\(toGreen) yd to green").font(.caption).foregroundStyle(.golfSecondaryText)
+                }
+            }
+            .accessibilityElement(children: .combine)
+            Spacer(minLength: 0)
+            Button("Undo") { store.deleteChainPoint(chain.count - 1, user: user) }
+                .accessibilityLabel("Remove the last measure point")
+            Button("Clear") { store.clearChain() }
+                .accessibilityLabel("Clear measurements")
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+    }
+
+    private func chainDetail(_ chain: [MeasurementChainPoint], index: Int) -> String {
+        var parts = ["\(chain[index].segmentYards) yd"]
+        if let green = store.hole.green { parts.append("\(GeoMath.yardsBetween(chain[index].coordinate, green)) to green") }
+        return parts.joined(separator: " · ")
     }
 
     private var scoreDetail: String? {

@@ -7,6 +7,7 @@ enum SettingsKey {
     static let idealLineEnabled = "idealLineEnabled"
     static let courseOverlaysEnabled = "courseOverlaysEnabled"
     static let showShotDispersion = "showShotDispersion"
+    static let bunkerDistancesOnMap = "bunkerDistancesOnMap"
     static let healthWorkoutMode = "healthWorkoutMode"
     static let startHealthWorkoutWithRound = "startHealthWorkoutWithRound"
     static let gpsSimulationEnabled = "gpsSimulationEnabled"

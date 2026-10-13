@@ -67,7 +67,13 @@ final class RoundStore {
     private(set) var holeLines: [[Coordinate]] = []
     private(set) var banner: String?
     private(set) var weather: WeatherConditions?
-    var selectedPinID: String?
+    private(set) var dispersion: [DispersionPoint] = []
+    var selectedPinID: String? {
+        didSet { if selectedPinID != nil { selectedChainIndex = nil } }
+    }
+    var selectedChainIndex: Int? {
+        didSet { if selectedChainIndex != nil { selectedPinID = nil } }
+    }
 
     let courseFeatures: [GolfFeature]
     private let repository: RoundRepository
@@ -101,7 +107,74 @@ final class RoundStore {
     private func refreshMapContent() {
         mapOverlays = MapOverlay.build(courseFeatures, course: round.courseName, hole: hole.hole)
         holeLines = hole.features.filter { $0.isType("hole") }.flatMap(\.geometry.lineStrings)
+        dispersion = ShotDispersion.points(rounds: repository.savedRounds, courseName: round.courseName, hole: hole.hole)
     }
+
+    // MARK: Measurement chain and club target
+
+    var chain: [MeasurementChainPoint] { round.measurementChains[round.selectedHole] ?? [] }
+    var clubAim: Coordinate? { round.clubAim[round.selectedHole] }
+
+    /// Chain segments start at the player. Without a fix they start at the selected tee, where Flutter left them at zero.
+    func chainOrigin(_ user: Coordinate?) -> Coordinate? {
+        guard !round.isCurrentHoleLocked else { return nil }
+        return user ?? selectedTeePoint
+    }
+
+    private var selectedTeePoint: Coordinate? {
+        round.preferredTeeLabel.flatMap { HoleGeometry.teeOption(hole.features, label: $0)?.point } ?? hole.tees.first?.point
+    }
+
+    func addChainPoint(_ point: Coordinate, user: Coordinate?) {
+        guard !round.isCurrentHoleLocked else { return }
+        selectedPinID = nil
+        selectedChainIndex = nil
+        setChain(MeasurementChain.adding(point, to: chain), user: user)
+    }
+
+    func moveChainPoint(_ index: Int, to point: Coordinate, user: Coordinate?) {
+        guard !round.isCurrentHoleLocked else { return }
+        setChain(MeasurementChain.moving(chain, index: index, to: point), user: user)
+    }
+
+    func deleteChainPoint(_ index: Int, user: Coordinate?) {
+        guard !round.isCurrentHoleLocked else { return }
+        selectedChainIndex = nil
+        setChain(MeasurementChain.removing(chain, index: index), user: user)
+    }
+
+    func clearChain() {
+        selectedChainIndex = nil
+        send(.setMeasurementChain(hole: round.selectedHole, points: []))
+    }
+
+    /// Segment lengths from where the player stands now; the stored chain updates only when edited.
+    func displayChain(user: Coordinate?) -> [MeasurementChainPoint] {
+        MeasurementChain.recalculated(chain, origin: chainOrigin(user))
+    }
+
+    private func setChain(_ points: [MeasurementChainPoint], user: Coordinate?) {
+        send(.setMeasurementChain(hole: round.selectedHole, points: MeasurementChain.recalculated(points, origin: chainOrigin(user))))
+    }
+
+    func setClubAim(_ point: Coordinate?) {
+        if round.isCurrentHoleLocked {
+            show("Unlock the hole to set a club target")
+            return
+        }
+        send(.setClubAim(hole: round.selectedHole, point: point))
+    }
+
+    /// Where bunker distances are measured from, in Flutter's order of preference.
+    func bunkerReference(_ user: Coordinate?) -> Coordinate? {
+        let lastTracked = round.lastTrackedPoint(round.selectedHole)
+        if round.isCurrentHoleLocked { return lastTracked }
+        if let origin = gpsOrigin(user) { return origin }
+        return lastTracked ?? selectedTeePoint ?? HoleGeometry.longestTee(hole.features) ?? user
+    }
+
+    /// Flutter shows the ideal line only on an unlocked hole with no measurement chain.
+    var showsIdealLine: Bool { !round.isCurrentHoleLocked && chain.isEmpty }
 
     func activate() {
         repository.saveActive(round)
@@ -142,6 +215,7 @@ final class RoundStore {
         if hole.hole != round.selectedHole || isPreferredTeeChange(action) {
             hole = HoleContext(course: round.courseName, hole: round.selectedHole, courseFeatures: courseFeatures, preferredTee: round.preferredTeeLabel)
             selectedPinID = nil
+            selectedChainIndex = nil
             autoAdvance = AutoAdvanceTracker()
         }
         if transition.changed {
@@ -168,7 +242,7 @@ final class RoundStore {
 
     func finish() {
         send(.lockAllHoles)
-        repository.finish(round)
+        repository.finish(round, features: courseFeatures)
         shared.clear()
         deactivate()
     }
@@ -272,6 +346,8 @@ final class RoundStore {
     private func yardsToGreen(from point: Coordinate, features: [GolfFeature]) -> Int? {
         HoleGeometry.greenCenter(features) == nil ? nil : HoleGeometry.greenYardages(from: point, features).middle
     }
+
+    func showMessage(_ message: String) { show(message) }
 
     private func show(_ message: String) {
         banner = message

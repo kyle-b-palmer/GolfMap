@@ -3,24 +3,40 @@ import GolfDesign
 import MapKit
 import SwiftUI
 
-/// Course overlays, pins, and the live line to the green on a hole-up rotated map.
+/// Which optional map content is visible. Stored in settings and toggled from the Layers menu.
+struct MapLayers: Equatable {
+    var imagery = true
+    /// Off draws only the course shapes on a plain background, which works without map tiles.
+    var mapUnderCourse = true
+    var idealLine = true
+    var bunkerDistances = false
+    var dispersion = false
+}
+
+/// Course overlays, pins, measurements, and planning lines on a hole-up rotated map.
 struct HoleMapView: View {
     let store: RoundStore
     let user: Coordinate?
     let isSimulated: Bool
-    let imagery: Bool
+    let layers: MapLayers
     let recenterToken: Int
-    let onTap: ((Coordinate) -> Void)?
+    let onTap: (Coordinate) -> Void
 
     @State private var position: MapCameraPosition = .automatic
     @State private var visibleSize: CGSize = .zero
     @State private var requestedCamera: MapCamera?
     @State private var fitPassesRemaining = 0
     @State private var isFramedOnHole = false
+    @State private var chainDrag: (index: Int, coordinate: Coordinate)?
+    @State private var aimDrag: Coordinate?
 
     var body: some View {
         MapReader { proxy in
             Map(position: $position, interactionModes: [.pan, .zoom, .rotate]) {
+                if !layers.mapUnderCourse, let center = store.hole.green ?? store.hole.orientation?.tee {
+                    MapPolygon(coordinates: Self.backgroundBox(around: center))
+                        .foregroundStyle(GolfMapPalette.courseBackground.color)
+                }
                 ForEach(store.mapOverlays) { overlay in
                     MapPolygon(coordinates: overlay.coordinates.map(\.clCoordinate))
                         .foregroundStyle(overlay.color.color.opacity(overlay.opacity))
@@ -30,10 +46,19 @@ struct HoleMapView: View {
                     MapPolyline(coordinates: store.holeLines[index].map(\.clCoordinate))
                         .stroke(GolfMapPalette.holeLine.color.opacity(0.7), style: StrokeStyle(lineWidth: 2, dash: [6, 6]))
                 }
-                if let origin = store.gpsOrigin(user), let green = store.hole.green {
-                    MapPolyline(coordinates: [origin.clCoordinate, green.clCoordinate])
-                        .stroke(GolfMapPalette.measureLine.color, lineWidth: 3)
+                if layers.dispersion {
+                    let heaviest = store.dispersion.map(\.weight).max() ?? 1
+                    ForEach(Array(store.dispersion.enumerated()), id: \.offset) { _, point in
+                        let share = point.weight / max(heaviest, 1)
+                        MapCircle(center: CLLocationCoordinate2D(latitude: point.latitude, longitude: point.longitude), radius: 3 + share * 6)
+                            .foregroundStyle(GolfMapPalette.dispersion.color.opacity(0.15 + share * 0.35))
+                            .stroke(GolfMapPalette.dispersion.color.opacity(0.5), lineWidth: 1)
+                    }
                 }
+                idealLineContent
+                measurementContent(proxy: proxy)
+                clubAimContent(proxy: proxy)
+                bunkerContent
                 if let green = store.hole.green {
                     Annotation("Green", coordinate: green.clCoordinate, anchor: .bottom) {
                         Image(systemName: "flag.fill")
@@ -69,13 +94,13 @@ struct HoleMapView: View {
                     UserAnnotation()
                 }
             }
-            .mapStyle(imagery ? .imagery(elevation: .flat) : .standard(elevation: .flat, emphasis: .muted, pointsOfInterest: .excludingAll))
+            .mapStyle(mapStyle)
             .mapControls {
                 MapCompass()
                 MapScaleView()
             }
             .onTapGesture { point in
-                guard let onTap, let coordinate = proxy.convert(point, from: .local) else { return }
+                guard let coordinate = proxy.convert(point, from: .local) else { return }
                 onTap(Coordinate(coordinate))
             }
             // The layout frame stops at the dock even though the map draws beneath it.
@@ -95,6 +120,164 @@ struct HoleMapView: View {
             frameHole(animated: true)
         }
     }
+
+    /// Course-only mode covers the imagery style because it has no labels; the standard style draws names above overlays.
+    private var mapStyle: MapStyle {
+        layers.imagery || !layers.mapUnderCourse
+            ? .imagery(elevation: .flat)
+            : .standard(elevation: .flat, emphasis: .muted, pointsOfInterest: .excludingAll)
+    }
+
+    /// About 11 km across: enough to cover the course at any zoom the round uses.
+    private static func backgroundBox(around center: Coordinate) -> [CLLocationCoordinate2D] {
+        let span = 0.05
+        return [
+            CLLocationCoordinate2D(latitude: center.latitude - span, longitude: center.longitude - span),
+            CLLocationCoordinate2D(latitude: center.latitude + span, longitude: center.longitude - span),
+            CLLocationCoordinate2D(latitude: center.latitude + span, longitude: center.longitude + span),
+            CLLocationCoordinate2D(latitude: center.latitude - span, longitude: center.longitude + span),
+        ]
+    }
+
+    // MARK: Planning and measuring
+
+    @MapContentBuilder
+    private var idealLineContent: some MapContent {
+        if layers.idealLine, store.showsIdealLine, let start = store.gpsOrigin(user), let green = store.hole.green {
+            let segments = HoleGeometry.plannedShots(start: start, green: green, store.hole.features)
+            ForEach(segments, id: \.shotNumber) { segment in
+                MapPolyline(coordinates: [segment.from.clCoordinate, segment.to.clCoordinate])
+                    .stroke(.white.opacity(0.5), lineWidth: 5)
+                MapPolyline(coordinates: [segment.from.clCoordinate, segment.to.clCoordinate])
+                    .stroke(GolfMapPalette.idealLine.color, lineWidth: 3)
+                if let carry = segment.carryPoint {
+                    MapPolyline(coordinates: [segment.from.clCoordinate, carry.clCoordinate])
+                        .stroke(.white, style: StrokeStyle(lineWidth: 2, dash: [4, 4]))
+                }
+                Annotation("Planned shot \(segment.shotNumber)", coordinate: midpoint(segment.from, segment.to)) {
+                    MapDistanceLabel(yards: segment.yards, prefix: "\(segment.shotNumber)", tint: GolfMapPalette.idealLine)
+                }
+                .annotationTitles(.hidden)
+            }
+        }
+    }
+
+    @MapContentBuilder
+    private func measurementContent(proxy: MapProxy) -> some MapContent {
+        let chain = displayedChain
+        let origin = chain.isEmpty ? store.gpsOrigin(user) : store.chainOrigin(user)
+        if let green = store.hole.green {
+            if chain.isEmpty {
+                if let origin {
+                    MapPolyline(coordinates: [origin.clCoordinate, green.clCoordinate])
+                        .stroke(GolfMapPalette.measureLine.color, lineWidth: 3)
+                }
+            } else {
+                let path = (origin.map { [$0] } ?? []) + chain.map(\.coordinate)
+                MapPolyline(coordinates: path.map(\.clCoordinate))
+                    .stroke(GolfMapPalette.measureLine.color, lineWidth: 3)
+                if let last = chain.last {
+                    MapPolyline(coordinates: [last.coordinate.clCoordinate, green.clCoordinate])
+                        .stroke(GolfMapPalette.measureLine.color.opacity(0.8), style: StrokeStyle(lineWidth: 2, dash: [6, 5]))
+                    Annotation("To green", coordinate: midpoint(last.coordinate, green)) {
+                        MapDistanceLabel(yards: GeoMath.yardsBetween(last.coordinate, green), tint: GolfMapPalette.measureLine)
+                    }
+                    .annotationTitles(.hidden)
+                }
+            }
+        }
+        ForEach(Array(chain.enumerated()), id: \.offset) { index, point in
+            let from = index == 0 ? store.chainOrigin(user) : chain[index - 1].coordinate
+            if let from, point.segmentYards > 0 {
+                Annotation("Segment \(index + 1)", coordinate: midpoint(from, point.coordinate)) {
+                    MapDistanceLabel(yards: point.segmentYards, tint: GolfMapPalette.measureLine)
+                }
+                .annotationTitles(.hidden)
+            }
+            Annotation("Measure point \(index + 1)", coordinate: point.coordinate.clCoordinate) {
+                ChainMarker(number: index + 1, selected: store.selectedChainIndex == index)
+                    .onTapGesture { store.selectedChainIndex = store.selectedChainIndex == index ? nil : index }
+                    .gesture(draggable(proxy: proxy) { coordinate, ended in
+                        chainDrag = ended ? nil : (index, coordinate)
+                        if ended { store.moveChainPoint(index, to: coordinate, user: user) }
+                    }, including: store.round.isCurrentHoleLocked ? .subviews : .all)
+                    .accessibilityLabel("Measure point \(index + 1), \(point.segmentYards) yards")
+                    .accessibilityAddTraits(.isButton)
+            }
+            .annotationTitles(.hidden)
+        }
+    }
+
+    /// The stored chain with any in-progress drag applied, measured from where the player is now.
+    private var displayedChain: [MeasurementChainPoint] {
+        var chain = store.chain
+        if let chainDrag { chain = MeasurementChain.moving(chain, index: chainDrag.index, to: chainDrag.coordinate) }
+        return MeasurementChain.recalculated(chain, origin: store.chainOrigin(user))
+    }
+
+    @MapContentBuilder
+    private func clubAimContent(proxy: MapProxy) -> some MapContent {
+        if let target = aimDrag ?? store.clubAim {
+            if let origin = user ?? store.gpsOrigin(user) {
+                let yards = GeoMath.yardsBetween(origin, target)
+                MapPolyline(coordinates: [origin.clCoordinate, target.clCoordinate])
+                    .stroke(GolfMapPalette.clubAim.color, style: StrokeStyle(lineWidth: 3, dash: [8, 6]))
+                if yards >= 1 {
+                    Annotation("Club target distance", coordinate: midpoint(origin, target)) {
+                        MapDistanceLabel(yards: yards, tint: GolfMapPalette.clubAim)
+                    }
+                    .annotationTitles(.hidden)
+                }
+            }
+            Annotation("Club target", coordinate: target.clCoordinate) {
+                Image(systemName: "scope")
+                    .font(.title3.weight(.bold))
+                    .foregroundStyle(GolfMapPalette.clubAim.color)
+                    .shadow(color: .black.opacity(0.6), radius: 2)
+                    .frame(width: GolfMetrics.minimumHitTarget, height: GolfMetrics.minimumHitTarget)
+                    .contentShape(Rectangle())
+                    .gesture(draggable(proxy: proxy) { coordinate, ended in
+                        aimDrag = ended ? nil : coordinate
+                        if ended { store.setClubAim(coordinate) }
+                    }, including: store.round.isCurrentHoleLocked ? .subviews : .all)
+                    .accessibilityLabel("Club target")
+            }
+            .annotationTitles(.hidden)
+        }
+    }
+
+    @MapContentBuilder
+    private var bunkerContent: some MapContent {
+        if layers.bunkerDistances, let reference = store.bunkerReference(user) {
+            let bunkers = HoleGeometry.bunkerDistances(from: reference, store.hole.features).filter { $0.point != nil && abs($0.yards) >= 1 }
+            ForEach(Array(bunkers.enumerated()), id: \.offset) { _, bunker in
+                if let point = bunker.point {
+                    Annotation(bunker.label, coordinate: point.clCoordinate) {
+                        MapDistanceLabel(yards: abs(bunker.yards), suffix: bunker.yards < 0 ? "BK" : nil, tint: GolfMapPalette.bunker)
+                            .accessibilityLabel(bunker.yards < 0 ? "\(bunker.label), \(-bunker.yards) yards behind" : "\(bunker.label), \(bunker.yards) yards")
+                    }
+                    .annotationTitles(.hidden)
+                }
+            }
+        }
+    }
+
+    /// Drags an annotation, reporting map coordinates as it moves and once more when released.
+    private func draggable(proxy: MapProxy, update: @escaping (Coordinate, _ ended: Bool) -> Void) -> some Gesture {
+        DragGesture(minimumDistance: 4, coordinateSpace: .global)
+            .onChanged { value in
+                if let coordinate = proxy.convert(value.location, from: .global) { update(Coordinate(coordinate), false) }
+            }
+            .onEnded { value in
+                if let coordinate = proxy.convert(value.location, from: .global) { update(Coordinate(coordinate), true) }
+            }
+    }
+
+    private func midpoint(_ a: Coordinate, _ b: Coordinate) -> CLLocationCoordinate2D {
+        CLLocationCoordinate2D(latitude: (a.latitude + b.latitude) / 2, longitude: (a.longitude + b.longitude) / 2)
+    }
+
+    // MARK: Camera
 
     private func frameHole(animated: Bool) {
         guard let camera = holeCamera() else { return }
@@ -182,6 +365,46 @@ private extension MapCamera {
         let centerMeters = GeoMath.distanceMeters(Coordinate(centerCoordinate), Coordinate(other.centerCoordinate))
         let headingDelta = abs((heading - other.heading + 540).truncatingRemainder(dividingBy: 360) - 180)
         return centerMeters < 3 && abs(distance / other.distance - 1) < 0.03 && headingDelta < 2
+    }
+}
+
+/// Yardage callout drawn on the map: dark chip with a colored border.
+struct MapDistanceLabel: View {
+    let yards: Int
+    var prefix: String?
+    var suffix: String?
+    let tint: RGB
+
+    var body: some View {
+        HStack(spacing: 3) {
+            if let prefix {
+                Text(prefix).foregroundStyle(tint.color)
+            }
+            Text("\(yards)").foregroundStyle(.white)
+            Text(suffix ?? "yd").foregroundStyle(.white.opacity(0.7))
+        }
+        .font(.caption.weight(.heavy).monospacedDigit())
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(Color(red: 0.07, green: 0.09, blue: 0.06).opacity(0.92), in: RoundedRectangle(cornerRadius: 6))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(tint.color, lineWidth: 1))
+        .dynamicTypeSize(...DynamicTypeSize.xxLarge)
+    }
+}
+
+private struct ChainMarker: View {
+    let number: Int
+    let selected: Bool
+
+    var body: some View {
+        Text("\(number)")
+            .font(.caption2.weight(.bold).monospacedDigit())
+            .foregroundStyle(.white)
+            .frame(width: 22, height: 22)
+            .background(GolfMapPalette.measureLine.color, in: Circle())
+            .overlay(Circle().stroke(selected ? GolfMapPalette.selection.color : .white, lineWidth: selected ? 4 : 2))
+            .frame(width: GolfMetrics.minimumHitTarget, height: GolfMetrics.minimumHitTarget)
+            .contentShape(Rectangle())
     }
 }
 

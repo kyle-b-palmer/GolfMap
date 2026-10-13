@@ -147,6 +147,7 @@ Fixed in the port (no fixture depends on them):
 
 - An identified remote undo whose pin was already gone fell back to proximity and could delete a different pin. It now matches by event ID only.
 - Auto-advance on the final green wrapped to hole 1 after 12 seconds, moving a player who was still putting out. It now stops on the final hole; the Next button still wraps.
+- Without a location fix, Flutter's measurement chain never measured its segments, so every segment read zero. The port measures from the selected tee until a fix arrives. With a fix, it measures from the player as Flutter does.
 
 ## Pending device work
 
@@ -156,4 +157,6 @@ Fixed in the port (no fixture depends on them):
 - Paired Watch checks for sync, pin transfer, and complications.
 - Supabase: `xycsxghpvylyquigzdje.supabase.co` did not resolve on 2026-10-13 (likely a paused project). The bundled data covers every current course, but the remote fallback and course uploads need the project restored before they can be checked live.
 - Seed a Flutter install with saved rounds, traced courses, and settings, then install the native build over it and check the import in the UI. In the simulator, `scripts/seed_legacy_round.sh` has confirmed a Flutter-format round imports and opens on the scorecard; the device check still needs a real Flutter install.
+- Map dragging on device: measure points, the club target, and the green close-up flag use drag gestures on map annotations. Simulator automation can't drag, so check that each drag moves the point rather than panning the map, at several zoom levels and rotations.
+- Offline rendering: with Map under course off, a plain background polygon covers the tiles around the hole. Confirm it in Airplane Mode on a course whose tiles were never cached.
 - Location states on device: deny access, turn off Precise Location, and walk out of coverage to confirm the dock's Searching, Approximate, GPS lost, and Location off states and their recovery text. Auto-advance (more than 12 seconds inside the green) needs an outdoor check for jitter at the green edge and on the last hole.

@@ -229,17 +229,32 @@ public struct MapControlButton: View {
 
     public var body: some View {
         Button(action: action) {
-            Image(systemName: systemImage)
-                .font(.body.weight(.semibold))
-                .symbolVariant(isActive ? .fill : .none)
-                .frame(width: GolfMetrics.minimumHitTarget, height: GolfMetrics.minimumHitTarget)
-                .foregroundStyle(isActive ? .golfBrand : .golfPrimaryText)
-                .background(.thickMaterial, in: Circle())
-                .overlay(Circle().strokeBorder(isActive ? .golfBrand : .golfSeparator, lineWidth: isActive ? 2 : 1))
+            MapControlLabel(systemImage: systemImage, isActive: isActive)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(label)
         .accessibilityAddTraits(isActive ? .isSelected : [])
+    }
+}
+
+/// The round map-button look, for menus as well as buttons.
+public struct MapControlLabel: View {
+    let systemImage: String
+    let isActive: Bool
+
+    public init(systemImage: String, isActive: Bool = false) {
+        self.systemImage = systemImage
+        self.isActive = isActive
+    }
+
+    public var body: some View {
+        Image(systemName: systemImage)
+            .font(.body.weight(.semibold))
+            .symbolVariant(isActive ? .fill : .none)
+            .frame(width: GolfMetrics.minimumHitTarget, height: GolfMetrics.minimumHitTarget)
+            .foregroundStyle(isActive ? .golfBrand : .golfPrimaryText)
+            .background(.thickMaterial, in: Circle())
+            .overlay(Circle().strokeBorder(isActive ? .golfBrand : .golfSeparator, lineWidth: isActive ? 2 : 1))
     }
 }
 

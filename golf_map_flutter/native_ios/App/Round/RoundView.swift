@@ -11,10 +11,19 @@ struct RoundView: View {
     @AppStorage(SettingsKey.mapImagery) private var imagery = true
     @AppStorage(SettingsKey.keepScreenAwake) private var keepAwake = true
     @AppStorage(SettingsKey.gpsSimulationEnabled) private var simulationEnabled = false
+    @AppStorage(SettingsKey.courseOverlaysEnabled) private var mapUnderCourse = true
+    @AppStorage(SettingsKey.idealLineEnabled) private var idealLine = true
+    @AppStorage(SettingsKey.bunkerDistancesOnMap) private var bunkerDistances = false
+    @AppStorage(SettingsKey.showShotDispersion) private var dispersion = false
     @State private var dockExpanded = false
     @State private var recenterToken = 0
-    @State private var placingSimulatedLocation = false
+    @State private var placement: MapPlacement?
     @State private var confirmEnd = false
+    @State private var showingGreen = false
+
+    private var layers: MapLayers {
+        MapLayers(imagery: imagery, mapUnderCourse: mapUnderCourse, idealLine: idealLine, bunkerDistances: bunkerDistances, dispersion: dispersion)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -23,20 +32,15 @@ struct RoundView: View {
                 store: store,
                 user: location.coordinate,
                 isSimulated: location.simulatedCoordinate != nil,
-                imagery: imagery,
+                layers: layers,
                 recenterToken: recenterToken,
-                onTap: placingSimulatedLocation ? { coordinate in
-                    location.simulatedCoordinate = coordinate
-                    placingSimulatedLocation = false
-                } : nil
+                onTap: handleMapTap
             )
             .overlay(alignment: .top) {
                 Group {
-                    if placingSimulatedLocation {
-                        PlacementBanner("Tap the map to set a simulated location") {
-                            placingSimulatedLocation = false
-                        }
-                        .padding(.horizontal, GolfSpacing.m)
+                    if let placement {
+                        PlacementBanner(placement.message) { self.placement = nil }
+                            .padding(.horizontal, GolfSpacing.m)
                     } else if let banner = store.banner {
                         Text(banner)
                             .font(.subheadline.weight(.semibold))
@@ -51,10 +55,9 @@ struct RoundView: View {
             }
             .overlay(alignment: .trailing) {
                 VStack(spacing: GolfSpacing.s) {
-                    MapControlButton("Show whole hole", systemImage: "scope") { recenterToken += 1 }
-                    MapControlButton(imagery ? "Show standard map" : "Show satellite map", systemImage: "square.3.layers.3d", isActive: imagery) {
-                        imagery.toggle()
-                    }
+                    MapControlButton("Show whole hole", systemImage: "arrow.up.left.and.arrow.down.right") { recenterToken += 1 }
+                    layersMenu
+                    MapControlButton("Green close-up", systemImage: "flag") { showingGreen = true }
                 }
                 .padding(.trailing, GolfSpacing.m)
             }
@@ -64,8 +67,20 @@ struct RoundView: View {
             YardageDock(store: store, gps: location.status, user: location.coordinate, expanded: $dockExpanded) {
                 guard let origin = store.gpsOrigin(location.coordinate) else { return }
                 store.markShot(at: origin, from: origin, source: .gps)
+            } onLostBall: {
+                guard let user = location.coordinate else { return }
+                store.markShot(at: user, from: user, source: .lostBall)
             }
         }
+        .fullScreenCover(isPresented: $showingGreen) {
+            GreenCloseUpView(store: store, imagery: imagery && mapUnderCourse)
+        }
+        #if DEBUG
+        .task {
+            // Screenshot automation, set like `GolfMapOpenCourse`.
+            if UserDefaults.standard.string(forKey: "GolfMapRoundRoute") == "green" { showingGreen = true }
+        }
+        #endif
         .sensoryFeedback(.success, trigger: store.round.currentPins.count) { old, new in new > old }
         .sensoryFeedback(.impact, trigger: store.round.selectedHole)
         .confirmationDialog("End round?", isPresented: $confirmEnd, titleVisibility: .visible) {
@@ -152,12 +167,18 @@ struct RoundView: View {
                 Button(store.round.isCurrentHoleLocked ? "Unlock hole" : "Lock hole", systemImage: store.round.isCurrentHoleLocked ? "lock.open" : "lock") {
                     store.send(.setLocked(hole: store.round.selectedHole, locked: !store.round.isCurrentHoleLocked))
                 }
+                if !store.round.isCurrentHoleLocked {
+                    Button(store.clubAim == nil ? "Set club target" : "Move club target", systemImage: "scope") { placement = .clubAim }
+                }
+                if store.clubAim != nil {
+                    Button("Clear club target", systemImage: "xmark.circle") { store.setClubAim(nil) }
+                }
                 Toggle("Auto-advance on green", systemImage: "forward", isOn: $autoAdvance)
                 Toggle("Keep screen awake", systemImage: "sun.max", isOn: $keepAwake)
                 if simulationEnabled || location.simulatedCoordinate != nil {
                     Section("Developer") {
                         if simulationEnabled {
-                            Button("Simulate location", systemImage: "hand.tap") { placingSimulatedLocation = true }
+                            Button("Simulate location", systemImage: "hand.tap") { placement = .simulatedLocation }
                         }
                         if location.simulatedCoordinate != nil {
                             Button("Use real GPS", systemImage: "location") { location.simulatedCoordinate = nil }
@@ -180,6 +201,52 @@ struct RoundView: View {
         .onChange(of: keepAwake) { _, value in UIApplication.shared.isIdleTimerDisabled = value }
     }
 
+    private var layersMenu: some View {
+        Menu {
+            Toggle("Satellite imagery", systemImage: "globe.americas", isOn: $imagery)
+                .disabled(!mapUnderCourse)
+            Toggle("Map under course", systemImage: "map", isOn: $mapUnderCourse)
+            Divider()
+            Toggle("Ideal line", systemImage: "point.topleft.down.to.point.bottomright.curvepath", isOn: $idealLine)
+            Toggle("Bunker distances", systemImage: "circle.dashed", isOn: $bunkerDistances)
+            Toggle("Shot dispersion", systemImage: "circle.grid.cross", isOn: $dispersion)
+        } label: {
+            MapControlLabel(systemImage: "square.3.layers.3d")
+        }
+        .accessibilityLabel("Map layers")
+        .onChange(of: bunkerDistances) { _, shown in
+            guard shown else { return }
+            if let reference = store.bunkerReference(location.coordinate) {
+                if HoleGeometry.bunkerDistances(from: reference, store.hole.features).isEmpty { store.showMessage("No bunkers on this hole") }
+            } else {
+                store.showMessage("Need GPS, a tee, or a tracked shot for bunker distances")
+            }
+        }
+        .onChange(of: dispersion) { _, shown in
+            if shown, store.dispersion.isEmpty { store.showMessage("No saved shots on this hole yet") }
+        }
+    }
+
+    /// A tap places whatever is pending; otherwise it adds a measurement point, as in Flutter.
+    private func handleMapTap(_ coordinate: Coordinate) {
+        switch placement {
+        case .simulatedLocation:
+            location.simulatedCoordinate = coordinate
+            store.showMessage("Test GPS position set")
+        case .clubAim:
+            store.setClubAim(coordinate)
+            if !store.round.isCurrentHoleLocked { store.showMessage("Club target set") }
+        case nil:
+            if store.selectedPinID != nil || store.selectedChainIndex != nil {
+                store.selectedPinID = nil
+                store.selectedChainIndex = nil
+            } else if !store.round.isCurrentHoleLocked {
+                store.addChainPoint(coordinate, user: location.coordinate)
+            }
+        }
+        placement = nil
+    }
+
     private var holeSubtitle: String {
         var parts: [String] = []
         let par = store.round.currentPar
@@ -197,5 +264,17 @@ struct RoundView: View {
         if par > 0 { title += " · Par \(par)" }
         if score > 0 { title += " · \(score)" }
         return title
+    }
+}
+
+private enum MapPlacement {
+    case simulatedLocation
+    case clubAim
+
+    var message: String {
+        switch self {
+        case .simulatedLocation: "Tap the map to set a simulated location"
+        case .clubAim: "Tap the map where you want to land"
+        }
     }
 }

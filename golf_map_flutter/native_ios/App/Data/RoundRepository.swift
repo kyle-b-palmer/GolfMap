@@ -31,8 +31,9 @@ final class RoundRepository {
         try? FileManager.default.removeItem(at: directory.appending(path: "active-round.json"))
     }
 
-    func finish(_ round: RoundState) {
-        let saved = round.savedRound()
+    /// `features` lets measurement chains merge into pins with yardage to the green, as Flutter saves them.
+    func finish(_ round: RoundState, features: [GolfFeature] = []) {
+        let saved = round.savedRound(features: features)
         write(saved, to: savedURL(saved.id))
         savedRounds.removeAll { $0.id == saved.id }
         savedRounds.insert(saved, at: 0)

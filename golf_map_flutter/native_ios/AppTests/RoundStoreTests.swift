@@ -100,6 +100,60 @@ struct RoundStoreTests {
         #expect(store.round.selectedHole == last)
     }
 
+    @Test func measuringFromTheTeeAndSavingKeepsTheChainAsPins() throws {
+        let store = makeStore()
+        store.activate()
+        let green = try #require(store.hole.green)
+        let tee = try #require(store.hole.tees.first?.point)
+        let landing = GeoMath.destination(from: tee, bearing: GeoMath.bearing(tee, green), meters: 200)
+
+        store.addChainPoint(landing, user: nil)
+        store.addChainPoint(green, user: nil)
+        #expect(store.chain.map(\.segmentYards) == [GeoMath.yardsBetween(tee, landing), GeoMath.yardsBetween(landing, green)])
+
+        store.deleteChainPoint(0, user: nil)
+        #expect(store.chain.map(\.segmentYards) == [GeoMath.yardsBetween(tee, green)], "the next segment is remeasured")
+        store.addChainPoint(landing, user: nil)
+
+        store.send(.setLocked(hole: store.round.selectedHole, locked: true))
+        store.addChainPoint(tee, user: nil)
+        #expect(store.chain.count == 2, "locked holes ignore taps")
+        store.send(.setLocked(hole: store.round.selectedHole, locked: false))
+
+        store.finish()
+        let saved = try #require(RoundRepository(directory: folder).savedRounds.first)
+        #expect(saved.measurementChains["1"]?.count == 2)
+        #expect(saved.pinnedShots["1"]?.map(\.shotNumber) == [1, 2])
+        #expect(saved.pinnedShots["1"]?.first?.yardsToPin == 0, "the first point is on the green")
+    }
+
+    @Test func lostBallAddsAStrokeAndDeletingAnyPinRemovesOne() throws {
+        let store = makeStore()
+        let green = try #require(store.hole.green)
+        store.send(.setScore(hole: "1", strokes: 3))
+        store.markShot(at: green, from: green, source: .lostBall)
+        #expect(store.round.currentScore == 4)
+        #expect(store.round.currentPins.first?.pinType == .lostBall)
+
+        store.markShot(at: green, from: green, source: .gps)
+        #expect(store.round.currentScore == 4, "ordinary pins leave the score alone")
+        let pin = try #require(store.round.currentPins.last)
+        store.send(.deletePin(hole: "1", id: pin.id))
+        #expect(store.round.currentScore == 3, "Flutter subtracts a stroke for any deleted pin")
+    }
+
+    @Test func clubTargetNeedsAnUnlockedHole() throws {
+        let store = makeStore()
+        let green = try #require(store.hole.green)
+        store.send(.setLocked(hole: "1", locked: true))
+        store.setClubAim(green)
+        #expect(store.clubAim == nil)
+        #expect(store.banner == "Unlock the hole to set a club target")
+        store.send(.setLocked(hole: "1", locked: false))
+        store.setClubAim(green)
+        #expect(store.clubAim == green)
+    }
+
     @Test func interruptedRoundRestoresFromDisk() throws {
         let store = makeStore()
         store.activate()
