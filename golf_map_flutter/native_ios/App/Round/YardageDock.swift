@@ -15,10 +15,9 @@ struct YardageDock: View {
     private var origin: Coordinate? { store.gpsOrigin(user) }
     private var yardages: GreenYardages? { store.yardages(from: origin) }
 
-    private var suggestion: ClubSuggestion? {
-        guard gps.allowsYardage, let middle = yardages?.middle, middle > 0 else { return nil }
-        let onTee = origin.map { HoleGeometry.isOnTeeBox($0, store.hole.features) } ?? false
-        return ClubAdvisor.suggest(yards: middle, clubs: ClubDistance.decodeBag(clubBagJSON), allowDriver: onTee)
+    private var advice: ShotAdvice? {
+        guard gps.allowsYardage else { return nil }
+        return store.shotAdvice(from: origin, clubs: ClubDistance.decodeBag(clubBagJSON))
     }
 
     private var selectedPin: PinnedShot? {
@@ -35,7 +34,11 @@ struct YardageDock: View {
                         .font(.callout.weight(.semibold))
                         .foregroundStyle(.golfSecondaryText)
                 } else {
-                    ClubSuggestionLine(playsLike: nil, club: suggestion?.club, alternate: suggestion?.alternateClub)
+                    ClubSuggestionLine(
+                        playsLike: advice.flatMap { $0.showsPlaysLike ? $0.playsLikeYards : nil },
+                        club: advice?.suggestion?.club,
+                        alternate: advice?.suggestion?.alternateClub
+                    )
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)

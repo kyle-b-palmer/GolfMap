@@ -17,6 +17,21 @@ struct ParityTests {
         #expect(features.filter { $0.holeNumber == nil }.count == 60)
     }
 
+    @Test func everyBundledCourseLoadsWithItsFeatures() {
+        let expected = [
+            "Brackenridge Golf Course": 199,
+            "Estes Park Golf Course": 127,
+            "Olmos Basin Golf Course": 199,
+            "San Antonio Country Club": 138,
+            "Yaupon Golf Course": 157,
+        ]
+        let catalog = CourseCatalog.build(features)
+        #expect(Set(catalog.map(\.name)) == Set(expected.keys))
+        for (course, count) in expected {
+            #expect(features.filter { $0.matchesCourse(course) }.count == count, "\(course)")
+        }
+    }
+
     @Test func courseCatalogMatches() throws {
         let catalog = CourseCatalog.build(features)
         let expected = try #require(parity["courses"]?.arrayValue)

@@ -24,10 +24,18 @@ final class CourseRepository {
         .appending(path: "Courses/user-courses.json")
 
     private let userCoursesURL: URL
+    private let bundledURL: URL?
+    private let remote: CourseRemoteClient
     private nonisolated static let logger = Logger(subsystem: "com.golfmapapp.golfMapFlutter", category: "courses")
 
-    init(userCoursesURL: URL = CourseRepository.defaultUserCoursesURL) {
+    init(
+        userCoursesURL: URL = CourseRepository.defaultUserCoursesURL,
+        bundledURL: URL? = Bundle.main.url(forResource: "san_antonio_courses", withExtension: "json"),
+        remote: CourseRemoteClient = CourseRemoteClient()
+    ) {
         self.userCoursesURL = userCoursesURL
+        self.bundledURL = bundledURL
+        self.remote = remote
     }
 
     func load() async {
@@ -35,12 +43,11 @@ final class CourseRepository {
         state = .loading
         let started = ContinuousClock.now
         let userCoursesURL = userCoursesURL
+        let bundledURL = bundledURL
+        let remote = remote
         do {
             let decoded = try await Task.detached(priority: .userInitiated) {
-                guard let url = Bundle.main.url(forResource: "san_antonio_courses", withExtension: "json") else {
-                    throw CocoaError(.fileNoSuchFile)
-                }
-                let bundled = try FeatureRowDecoder.decode(Data(contentsOf: url))
+                let bundled = try await Self.loadSourceFeatures(bundledURL: bundledURL, remote: remote)
                 let user = Self.loadUserFeatures(at: userCoursesURL)
                 let features = bundled + user
                 let userNames = Set(user.compactMap(\.courseName).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty })
@@ -63,6 +70,17 @@ final class CourseRepository {
 
     func entry(named name: String) -> CourseCatalogEntry? {
         catalog.first { $0.name == name }
+    }
+
+    /// Bundled data first; Supabase only when the asset is missing or unreadable, as in Flutter.
+    private nonisolated static func loadSourceFeatures(bundledURL: URL?, remote: CourseRemoteClient) async throws -> [GolfFeature] {
+        do {
+            guard let bundledURL else { throw CocoaError(.fileNoSuchFile) }
+            return try FeatureRowDecoder.decode(Data(contentsOf: bundledURL))
+        } catch {
+            logger.error("Bundled courses unavailable (\(error.localizedDescription)); loading from Supabase")
+            return try await remote.allFeatures()
+        }
     }
 
     /// A damaged user file shouldn't hide the bundled courses.

@@ -138,6 +138,9 @@ These are current behavior, not intended product rules. The port reproduces them
 11. **Dispersion never groups nearby shots.** The bucket key includes the raw latitude, so shots only merge when their latitudes are identical and the 8-yard grid has no effect.
 12. **Watch swing detection didn't compile.** On the checkpoint the swing detector's callback passed an IMU session that `GolfRoundWatchViewModel` didn't accept. The native Watch target saves the session and passes its ID to `recordDetectedSwing`.
 
+13. **Wind direction is reversed in plays-like.** Open-Meteo reports the direction wind blows from, but the formula treats it as the direction it blows toward: a north wind shortens a northbound shot. The port reproduces this (see `WeatherTests`); fix it in both places together.
+14. **Club suggestion can target the last pin.** Once a hole has a tracked shot, Flutter measures the suggestion from the player to that pin. After Mark Shot the player is standing on it, so the suggestion collapses. The port always targets the middle of the green.
+
 Fixed in the port (no fixture depends on them):
 
 - An identified remote undo whose pin was already gone fell back to proximity and could delete a different pin. It now matches by event ID only.
@@ -148,3 +151,5 @@ Fixed in the port (no fixture depends on them):
 - Cold launch to course list, hole switch time, and battery drain over a fixed route, on one named iPhone model.
 - Outdoor review of the Phase 1 yardage dock.
 - Paired Watch checks for sync, pin transfer, and complications.
+- Supabase: `xycsxghpvylyquigzdje.supabase.co` did not resolve on 2026-10-13 (likely a paused project). The bundled data covers every current course, but the remote fallback and course uploads need the project restored before they can be checked live.
+- Seed a Flutter install with saved rounds, traced courses, and settings, then install the native build over it and check the import in the UI.

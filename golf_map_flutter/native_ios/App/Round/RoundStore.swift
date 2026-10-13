@@ -66,11 +66,14 @@ final class RoundStore {
     private(set) var mapOverlays: [MapOverlay] = []
     private(set) var holeLines: [[Coordinate]] = []
     private(set) var banner: String?
+    private(set) var weather: WeatherConditions?
     var selectedPinID: String?
 
     let courseFeatures: [GolfFeature]
     private let repository: RoundRepository
     private let shared: SharedRoundStore
+    private let weatherService: WeatherService
+    private var weatherTask: Task<Void, Never>?
     private var autoAdvance = AutoAdvanceTracker()
     private var lastPublishedRevision = 0
     private var lastPublishedYards: Int?
@@ -79,11 +82,18 @@ final class RoundStore {
 
     private static let logger = Logger(subsystem: "com.golfmapapp.golfMapFlutter", category: "round")
 
-    init(round: RoundState, courseFeatures: [GolfFeature], repository: RoundRepository, shared: SharedRoundStore = .shared) {
+    init(
+        round: RoundState,
+        courseFeatures: [GolfFeature],
+        repository: RoundRepository,
+        shared: SharedRoundStore = .shared,
+        weatherService: WeatherService = .shared
+    ) {
         self.round = round
         self.courseFeatures = courseFeatures
         self.repository = repository
         self.shared = shared
+        self.weatherService = weatherService
         hole = HoleContext(course: round.courseName, hole: round.selectedHole, courseFeatures: courseFeatures, preferredTee: round.preferredTeeLabel)
         refreshMapContent()
     }
@@ -181,15 +191,43 @@ final class RoundStore {
         return HoleGeometry.greenYardages(from: origin, hole.features)
     }
 
-    /// Called for each new fix: keeps the shared yardage current and runs auto-advance.
+    /// Plays-like yardage to the middle of the green and the club for it; raw yardage when weather is missing.
+    func shotAdvice(from origin: Coordinate?, clubs: [ClubDistance]) -> ShotAdvice? {
+        guard let origin else { return nil }
+        return ShotAdvice.make(
+            actualYards: yardages(from: origin)?.middle,
+            origin: origin,
+            greenCenter: hole.green,
+            weather: weather,
+            clubs: clubs,
+            onTeeBox: HoleGeometry.isOnTeeBox(origin, hole.features),
+            hasTrackedShots: !round.currentPins.isEmpty
+        )
+    }
+
+    /// Called for each new fix: keeps the shared yardage current, refreshes weather, and runs auto-advance.
     func locationChanged(_ user: Coordinate?, autoAdvanceEnabled: Bool) {
-        let yards = yardages(from: gpsOrigin(user))?.middle
+        let origin = gpsOrigin(user)
+        let yards = yardages(from: origin)?.middle
         if yards != lastPublishedYards {
             publish(yardsToGreen: yards)
         }
+        if let origin { refreshWeather(at: origin) }
         guard autoAdvanceEnabled, let user else { return }
         if autoAdvance.update(onGreen: HoleGeometry.isPointInGreen(user, hole.features), now: .now) {
             send(.nextHole)
+        }
+    }
+
+    /// The service caches for 15 minutes within 500 m, so this only reaches the network occasionally.
+    private func refreshWeather(at origin: Coordinate) {
+        guard weatherTask == nil else { return }
+        let service = weatherService
+        weatherTask = Task { [weak self] in
+            let conditions = await service.conditions(at: origin)
+            guard let self else { return }
+            if conditions != weather { weather = conditions }
+            weatherTask = nil
         }
     }
 
