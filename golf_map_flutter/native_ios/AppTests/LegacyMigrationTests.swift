@@ -78,6 +78,13 @@ struct LegacyMigrationTests {
         #expect(defaults.stringArray(forKey: SettingsKey.favoriteCourses) == ["Yaupon Golf Course"])
     }
 
+    @Test func homeHealthToggleOffMeansNever() {
+        defaults.set("ask", forKey: "flutter.health_workout_mode")
+        defaults.set(false, forKey: "flutter.start_health_workout_with_round")
+        migration.runIfNeeded(rounds: repository())
+        #expect(defaults.string(forKey: SettingsKey.healthWorkoutMode) == "never")
+    }
+
     @Test func legacyValuesAreLeftUntouched() throws {
         seedFlutterStore()
         migration.runIfNeeded(rounds: repository())

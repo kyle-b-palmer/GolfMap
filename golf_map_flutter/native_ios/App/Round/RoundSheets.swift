@@ -98,6 +98,37 @@ struct RoundScorecardSheet: View {
         .navigationTitle(round.courseName)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                RoundShareLink(card: .scorecard, recap: RoundRecap(round), label: "Share")
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Done") { dismiss() }
+            }
+        }
+    }
+}
+
+/// Offered after saving, as Flutter's "Share recap" prompt was.
+struct SavedRecapSheet: View {
+    let recap: RoundRecap
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: GolfSpacing.l) {
+                RoundShareCard.recap.view(recap)
+                    .environment(\.colorScheme, .dark)
+                RoundShareLink(card: .recap, recap: recap, label: "Share recap")
+                    .buttonStyle(.golfPrimary)
+                RoundShareLink(card: .scorecard, recap: recap, label: "Share scorecard")
+            }
+            .padding(GolfSpacing.m)
+            .frame(maxWidth: .infinity)
+        }
+        .navigationTitle("Round saved")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
             ToolbarItem(placement: .confirmationAction) {
                 Button("Done") { dismiss() }
             }

@@ -122,6 +122,9 @@ Each item must exist natively, or be explicitly dropped, before cutover.
 | Watch protocol v2 | Additive: optional `eventId` and `protocolVersion`; v1 peers fall back to proximity matching |
 | GPS simulation | Hidden behind Developer settings |
 | Upload semantics | Unchanged from Flutter until Phase 6 |
+| Live Activity | Created on the first round update and ended when the round screen closes, as Flutter did; it returns when the round reopens. Updates that only change the yardage are throttled to one every 5 seconds |
+| Health workout | One setting (Always, Ask each round, Never). A workout starts once per round session and never for a reopened round, then ends when the round is saved or discarded |
+| Sharing | Scorecard and recap images render with `ImageRenderer` at 3x. Saving a round shows the recap with share buttons; saved rounds and the in-round scorecard share too |
 
 ## Existing defects
 
@@ -148,13 +151,18 @@ Fixed in the port (no fixture depends on them):
 - An identified remote undo whose pin was already gone fell back to proximity and could delete a different pin. It now matches by event ID only.
 - Auto-advance on the final green wrapped to hole 1 after 12 seconds, moving a player who was still putting out. It now stops on the final hole; the Next button still wraps.
 - Without a location fix, Flutter's measurement chain never measured its segments, so every segment read zero. The port measures from the selected tee until a fix arrives. With a fix, it measures from the player as Flutter does.
+- Flutter had two health controls: a home-screen "Apple Health workout" toggle that decided for rounds started from home, and the Always/Ask/Never mode that only applied elsewhere. The port keeps the mode only; a Flutter user who had the home toggle off imports as Never.
+- Flutter ended the health workout whenever the round screen closed, so glancing at the course list cut a workout short and it didn't restart. The port keeps it running until the round is saved or discarded.
+- The native targets' entitlements files were empty because XcodeGen regenerates them from `project.yml`; the App Group and HealthKit entitlements now live there, matching Flutter's targets.
 
 ## Pending device work
 
 - Screenshots of every flow above in the Flutter build.
 - Cold launch to course list, hole switch time, and battery drain over a fixed route, on one named iPhone model.
 - Outdoor review of the Phase 1 yardage dock.
-- Paired Watch checks for sync, pin transfer, and complications.
+- Paired Watch checks for sync, pin transfer, and complications. The phone session only sends when a Watch is paired with the app installed, so the simulator never exercises it.
+- Live Activity content on device: the simulator confirms the activity starts (`liveactivitiesd` logs "Created activity"), but unsigned simulator builds have no App Group, so the widget can't read hole, score, or yardage. Check the Lock Screen and Dynamic Island on a signed device build, including the score buttons and the end of the activity when the round is saved.
+- HealthKit on device: the permission prompt, a golf workout appearing in Health after saving, and the Ask prompt. Simulator builds aren't signed with the HealthKit entitlement.
 - Supabase: `xycsxghpvylyquigzdje.supabase.co` did not resolve on 2026-10-13 (likely a paused project). The bundled data covers every current course, but the remote fallback and course uploads need the project restored before they can be checked live.
 - Seed a Flutter install with saved rounds, traced courses, and settings, then install the native build over it and check the import in the UI. In the simulator, `scripts/seed_legacy_round.sh` has confirmed a Flutter-format round imports and opens on the scorecard; the device check still needs a real Flutter install.
 - Map dragging on device: measure points, the club target, and the green close-up flag use drag gestures on map annotations. Simulator automation can't drag, so check that each drag moves the point rather than panning the map, at several zoom levels and rotations.

@@ -10,6 +10,7 @@ struct RoundStoreTests {
     let features: [GolfFeature]
     let folder: URL
     let shared: SharedRoundStore
+    let companions = RecordingCompanions()
 
     init() throws {
         let url = try #require(Bundle(for: RoundRepository.self).url(forResource: "san_antonio_courses", withExtension: "json"))
@@ -24,7 +25,8 @@ struct RoundStoreTests {
             round: RoundState.start(course: "Brackenridge Golf Course", features: features),
             courseFeatures: features,
             repository: RoundRepository(directory: folder),
-            shared: shared
+            shared: shared,
+            companions: companions
         )
     }
 
@@ -37,6 +39,18 @@ struct RoundStoreTests {
         #expect(snapshot.sessionId == store.round.sessionID)
         #expect(snapshot.greenLatitude != 0)
         #expect(RoundRepository(directory: folder).activeRound?.id == store.round.id)
+    }
+
+    @Test func companionsFollowTheRound() {
+        let store = makeStore()
+        store.activate()
+        store.send(.setScore(hole: "1", strokes: 5))
+        #expect(companions.published.last?.scores["1"] == 5)
+        store.deactivate()
+        #expect(companions.leftCount == 1)
+        store.activate()
+        store.finish()
+        #expect(companions.ended == [store.round.sessionID])
     }
 
     @Test func liveActivityEditsAreApplied() throws {
@@ -183,7 +197,8 @@ struct RoundStoreTests {
             round: RoundState.reopen(saved, features: features),
             courseFeatures: features,
             repository: repository,
-            shared: shared
+            shared: shared,
+            companions: companions
         )
         reopened.activate()
         #expect(reopened.round.lockedHoles.count == reopened.round.holes.count, "saved rounds reopen locked")
@@ -197,4 +212,15 @@ struct RoundStoreTests {
         #expect(rounds.first?.playedAt == saved.playedAt)
         #expect(rounds.first?.scores["1"] == 6)
     }
+}
+
+@MainActor
+final class RecordingCompanions: RoundCompanions {
+    var published: [GolfRoundSharedState] = []
+    var leftCount = 0
+    var ended: [String] = []
+
+    func roundPublished(_ state: GolfRoundSharedState) { published.append(state) }
+    func roundLeft() { leftCount += 1 }
+    func roundEnded(sessionId: String) { ended.append(sessionId) }
 }

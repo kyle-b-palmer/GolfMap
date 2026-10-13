@@ -65,6 +65,15 @@ struct SavedRoundDetailView: View {
         }
         .navigationTitle(round.courseName)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                let recap = RoundRecap(state)
+                Menu("Share", systemImage: "square.and.arrow.up") {
+                    RoundShareLink(card: .scorecard, recap: recap)
+                    RoundShareLink(card: .recap, recap: recap)
+                }
+            }
+        }
         .confirmationDialog("Delete this round?", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Delete round", role: .destructive) {
                 onDelete(round)

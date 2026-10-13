@@ -48,6 +48,9 @@ targets:
       - target: GolfMapWatch
     entitlements:
       path: App/GolfMap.entitlements
+      properties:
+          com.apple.security.application-groups: [group.com.golfmapapp.golfMapFlutter]
+          com.apple.developer.healthkit: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.golfmapapp.golfMapFlutter
@@ -74,6 +77,8 @@ targets:
       - sdk: SwiftUI.framework
     entitlements:
       path: LiveActivity/GolfRoundWidget.entitlements
+      properties:
+          com.apple.security.application-groups: [group.com.golfmapapp.golfMapFlutter]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.golfmapapp.golfMapFlutter.GolfRoundWidget
@@ -102,6 +107,8 @@ targets:
       - target: GolfMapWatchWidget
     entitlements:
       path: Watch/GolfMapWatch.entitlements
+      properties:
+          com.apple.security.application-groups: [group.com.golfmapapp.golfMapFlutter]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.golfmapapp.golfMapFlutter.watchkitapp
@@ -124,6 +131,8 @@ targets:
       - sdk: SwiftUI.framework
     entitlements:
       path: WatchWidget/GolfMapWatchWidget.entitlements
+      properties:
+          com.apple.security.application-groups: [group.com.golfmapapp.golfMapFlutter]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.golfmapapp.golfMapFlutter.watchkitapp.widget

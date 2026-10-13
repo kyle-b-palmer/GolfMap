@@ -8,6 +8,10 @@ struct GolfMapApp: App {
     @State private var rounds = RoundRepository()
     @State private var library = CourseLibraryStore()
 
+    init() {
+        PhoneWatchSession.shared.activate()
+    }
+
     var body: some Scene {
         WindowGroup {
             HomeView()

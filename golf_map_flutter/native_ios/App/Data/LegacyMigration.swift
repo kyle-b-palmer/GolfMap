@@ -88,8 +88,9 @@ struct LegacyMigration {
         setIfAbsent(preferences.idealLineEnabled, SettingsKey.idealLineEnabled)
         setIfAbsent(preferences.mapOverlayEnabled, SettingsKey.courseOverlaysEnabled)
         setIfAbsent(preferences.showShotDispersion, SettingsKey.showShotDispersion)
-        setIfAbsent(preferences.healthWorkoutMode.rawValue, SettingsKey.healthWorkoutMode)
-        setIfAbsent(preferences.startHealthWorkoutWithRound, SettingsKey.startHealthWorkoutWithRound)
+        // Flutter's home toggle overrode the mode for rounds started from home; native has the mode only.
+        let healthMode = preferences.startHealthWorkoutWithRound ? preferences.healthWorkoutMode : .never
+        setIfAbsent(healthMode.rawValue, SettingsKey.healthWorkoutMode)
         setIfAbsent(preferences.gpsSimulationEnabled, SettingsKey.gpsSimulationEnabled)
         if let bag = result.clubBag { setIfAbsent(ClubDistance.encodeBag(bag), SettingsKey.clubBag) }
         if !result.favorites.isEmpty { setIfAbsent(result.favorites, SettingsKey.favoriteCourses) }

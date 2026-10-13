@@ -79,6 +79,7 @@ final class RoundStore {
     private let repository: RoundRepository
     private let shared: SharedRoundStore
     private let weatherService: WeatherService
+    private let companions: RoundCompanions?
     private var weatherTask: Task<Void, Never>?
     private var autoAdvance = AutoAdvanceTracker()
     private var lastPublishedRevision = 0
@@ -93,13 +94,15 @@ final class RoundStore {
         courseFeatures: [GolfFeature],
         repository: RoundRepository,
         shared: SharedRoundStore = .shared,
-        weatherService: WeatherService = .shared
+        weatherService: WeatherService = .shared,
+        companions: RoundCompanions? = LiveRoundCompanions.shared
     ) {
         self.round = round
         self.courseFeatures = courseFeatures
         self.repository = repository
         self.shared = shared
         self.weatherService = weatherService
+        self.companions = companions
         hole = HoleContext(course: round.courseName, hole: round.selectedHole, courseFeatures: courseFeatures, preferredTee: round.preferredTeeLabel)
         refreshMapContent()
     }
@@ -186,6 +189,7 @@ final class RoundStore {
 
     func deactivate() {
         observer = nil
+        companions?.roundLeft()
     }
 
     // MARK: Actions
@@ -245,12 +249,21 @@ final class RoundStore {
         repository.finish(round, features: courseFeatures)
         shared.clear()
         deactivate()
+        companions?.roundEnded(sessionId: round.sessionID)
+    }
+
+    /// Recap figures with measurement chains merged into pins, as `finish()` saves them.
+    var recapAsSaved: RoundRecap {
+        var saved = round
+        saved.pinnedShots = round.savedRound(features: courseFeatures).pinnedShots
+        return RoundRecap(saved)
     }
 
     func discard() {
         repository.discardActive()
         shared.clear()
         deactivate()
+        companions?.roundEnded(sessionId: round.sessionID)
     }
 
     // MARK: Location
@@ -323,7 +336,10 @@ final class RoundStore {
         }
         shared.activeSessionId = round.sessionID
         lastPublishedYards = yardsToGreen
-        if let updated { lastPublishedRevision = updated.revision }
+        if let updated {
+            lastPublishedRevision = updated.revision
+            companions?.roundPublished(updated)
+        }
     }
 
     /// Applies edits made by the Live Activity or Watch since the phone last published.

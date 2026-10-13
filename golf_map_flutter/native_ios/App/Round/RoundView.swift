@@ -15,6 +15,9 @@ struct RoundView: View {
     @AppStorage(SettingsKey.idealLineEnabled) private var idealLine = true
     @AppStorage(SettingsKey.bunkerDistancesOnMap) private var bunkerDistances = false
     @AppStorage(SettingsKey.showShotDispersion) private var dispersion = false
+    @AppStorage(SettingsKey.healthWorkoutMode) private var healthMode = HealthWorkoutMode.always.rawValue
+    @State private var askToStartWorkout = false
+    @State private var savedRecap: RoundRecap?
     @State private var dockExpanded = false
     @State private var recenterToken = 0
     @State private var placement: MapPlacement?
@@ -85,9 +88,10 @@ struct RoundView: View {
         .sensoryFeedback(.impact, trigger: store.round.selectedHole)
         .confirmationDialog("End round?", isPresented: $confirmEnd, titleVisibility: .visible) {
             Button("Save round") {
+                let recap = store.recapAsSaved
                 store.finish()
                 location.endRound()
-                dismiss()
+                savedRecap = recap
             }
             Button("Discard round", role: .destructive) {
                 store.discard()
@@ -97,10 +101,22 @@ struct RoundView: View {
         } message: {
             Text("Saving locks every hole. You can reopen a saved round later.")
         }
+        .sheet(isPresented: Binding(get: { savedRecap != nil }, set: { if !$0 { savedRecap = nil } }), onDismiss: { dismiss() }) {
+            if let savedRecap {
+                NavigationStack { SavedRecapSheet(recap: savedRecap) }
+            }
+        }
+        .alert("Start Apple Health workout?", isPresented: $askToStartWorkout) {
+            Button("Not now", role: .cancel) {}
+            Button("Start workout") { Task { await HealthWorkoutService.shared.start() } }
+        } message: {
+            Text("Track this round as a golf workout in Apple Health. You can change this in Settings.")
+        }
         .onAppear {
             store.activate()
             location.start(inRound: true)
             UIApplication.shared.isIdleTimerDisabled = keepAwake
+            startWorkoutIfNeeded()
         }
         .onDisappear {
             store.deactivate()
@@ -111,6 +127,19 @@ struct RoundView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
             store.consumeSharedChanges()
+        }
+    }
+
+    /// Once per round session, and never for a reopened round.
+    private func startWorkoutIfNeeded() {
+        let health = HealthWorkoutService.shared
+        let session = store.round.sessionID
+        guard !store.round.isReopened, health.isAvailable, !health.isRunning, !health.hasHandled(session: session) else { return }
+        health.markHandled(session: session)
+        switch HealthWorkoutMode(rawValue: healthMode) ?? .always {
+        case .always: Task { await health.start() }
+        case .ask: askToStartWorkout = true
+        case .never: break
         }
     }
 

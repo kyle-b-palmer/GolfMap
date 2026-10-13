@@ -9,7 +9,6 @@ enum SettingsKey {
     static let showShotDispersion = "showShotDispersion"
     static let bunkerDistancesOnMap = "bunkerDistancesOnMap"
     static let healthWorkoutMode = "healthWorkoutMode"
-    static let startHealthWorkoutWithRound = "startHealthWorkoutWithRound"
     static let gpsSimulationEnabled = "gpsSimulationEnabled"
     /// JSON list of `{name, carryYards}`; empty means the default bag.
     static let clubBag = "clubBag"

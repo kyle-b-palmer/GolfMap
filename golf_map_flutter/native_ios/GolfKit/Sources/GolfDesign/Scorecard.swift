@@ -74,9 +74,12 @@ public struct ScorecardHole: Hashable, Sendable, Identifiable {
 /// Front and back nine tables with subtotals, scrolling sideways when text is large.
 public struct ScorecardGrid: View {
     let holes: [ScorecardHole]
+    let scrolls: Bool
 
-    public init(holes: [ScorecardHole]) {
+    /// Pass `scrolls: false` for image rendering, which doesn't lay out scroll views.
+    public init(holes: [ScorecardHole], scrolls: Bool = true) {
         self.holes = holes
+        self.scrolls = scrolls
     }
 
     private var nines: [(title: String, holes: [ScorecardHole])] {
@@ -87,11 +90,15 @@ public struct ScorecardGrid: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: GolfSpacing.m) {
             ForEach(nines, id: \.title) { nine in
-                ScrollView(.horizontal) {
+                if scrolls {
+                    ScrollView(.horizontal) {
+                        table(nine.title, nine.holes)
+                            .padding(.vertical, GolfSpacing.xxs)
+                    }
+                    .scrollIndicators(.hidden)
+                } else {
                     table(nine.title, nine.holes)
-                        .padding(.vertical, GolfSpacing.xxs)
                 }
-                .scrollIndicators(.hidden)
             }
         }
     }
