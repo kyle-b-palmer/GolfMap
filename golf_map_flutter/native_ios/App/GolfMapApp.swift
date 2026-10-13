@@ -6,6 +6,7 @@ struct GolfMapApp: App {
     @State private var courses = CourseRepository()
     @State private var location = LocationService()
     @State private var rounds = RoundRepository()
+    @State private var library = CourseLibraryStore()
 
     var body: some Scene {
         WindowGroup {
@@ -13,9 +14,10 @@ struct GolfMapApp: App {
                 .environment(courses)
                 .environment(location)
                 .environment(rounds)
+                .environment(library)
                 .tint(.golfBrand)
                 .task {
-                    LegacyMigration().runIfNeeded(rounds: rounds)
+                    if LegacyMigration().runIfNeeded(rounds: rounds) != nil { library.reload() }
                     await courses.load()
                 }
         }

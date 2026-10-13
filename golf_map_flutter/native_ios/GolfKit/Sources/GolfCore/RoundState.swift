@@ -81,9 +81,17 @@ public struct RoundState: Codable, Hashable, Sendable {
         )
     }
 
-    /// Reopens a saved round; holes missing a stored score start at zero.
+    /// Reopens a saved round; holes missing a stored score start at zero. When the course is no longer
+    /// available, the saved holes stand in so no score is dropped on the next save.
     public static func reopen(_ saved: SavedRound, features: [GolfFeature], sessionID: String = UUID().uuidString) -> RoundState {
         var state = start(course: saved.courseName, features: features, sessionID: sessionID)
+        let savedHoles = Set(saved.scores.keys).union(saved.putts.keys).union(saved.pinnedShots.keys)
+        if !savedHoles.isSubset(of: state.holes) {
+            state.holes = CourseCatalog.sortedHoles(Set(state.holes).union(savedHoles))
+        }
+        if !state.holes.contains(state.selectedHole), let first = state.holes.first {
+            state.selectedHole = first
+        }
         state.id = saved.id
         state.playedAt = saved.playedAt
         state.isReopened = true

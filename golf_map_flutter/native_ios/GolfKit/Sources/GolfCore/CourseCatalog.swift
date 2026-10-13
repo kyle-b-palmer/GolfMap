@@ -115,8 +115,12 @@ public enum CourseCatalog {
 
     /// Hole numbers for a course, numerically ordered; non-numeric labels sort after numbers.
     public static func holes(_ features: [GolfFeature], course: String) -> [String] {
-        let holes = Set(features.filter { $0.matchesCourse(course) }.compactMap(\.holeNumber))
-        return holes.sorted { a, b in
+        sortedHoles(Set(features.filter { $0.matchesCourse(course) }.compactMap(\.holeNumber)))
+    }
+
+    /// Numeric holes in order, then any other labels.
+    public static func sortedHoles(_ holes: some Collection<String>) -> [String] {
+        Set(holes).sorted { a, b in
             switch (Int(a), Int(b)) {
             case let (x?, y?): return x != y ? x < y : dartLess(a, b)
             case (.some, nil): return true

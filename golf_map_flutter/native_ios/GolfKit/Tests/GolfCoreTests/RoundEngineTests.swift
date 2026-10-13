@@ -30,6 +30,22 @@ struct RoundEngineTests {
         #expect(state.score("2") == 0)
     }
 
+    @Test func reopeningWithoutCourseDataKeepsEveryScore() {
+        let saved = SavedRound(
+            id: "kept",
+            courseName: "Removed Course",
+            playedAt: DartDate(date: Date(timeIntervalSince1970: 0), isUTC: false),
+            scores: ["10": 5, "2": 4, "1": 6],
+            putts: ["2": 2]
+        )
+        let state = RoundState.reopen(saved, features: [])
+        #expect(state.holes == ["1", "2", "10"])
+        #expect(state.selectedHole == "1")
+        #expect(state.savedRound().scores == saved.scores)
+        #expect(state.savedRound().id == "kept")
+        #expect(state.savedRound().playedAt == saved.playedAt)
+    }
+
     @Test func totalsMatchFlutterRules() {
         let state = run([.setScore(hole: "1", strokes: 5), .setScore(hole: "2", strokes: 3)])
         #expect(state.totalScore == 8)

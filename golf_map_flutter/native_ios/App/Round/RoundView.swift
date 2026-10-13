@@ -10,6 +10,7 @@ struct RoundView: View {
     @AppStorage(SettingsKey.autoAdvanceHoles) private var autoAdvance = true
     @AppStorage(SettingsKey.mapImagery) private var imagery = true
     @AppStorage(SettingsKey.keepScreenAwake) private var keepAwake = true
+    @AppStorage(SettingsKey.gpsSimulationEnabled) private var simulationEnabled = false
     @State private var dockExpanded = false
     @State private var recenterToken = 0
     @State private var placingSimulatedLocation = false
@@ -153,10 +154,14 @@ struct RoundView: View {
                 }
                 Toggle("Auto-advance on green", systemImage: "forward", isOn: $autoAdvance)
                 Toggle("Keep screen awake", systemImage: "sun.max", isOn: $keepAwake)
-                Section("Developer") {
-                    Button("Simulate location", systemImage: "hand.tap") { placingSimulatedLocation = true }
-                    if location.simulatedCoordinate != nil {
-                        Button("Use real GPS", systemImage: "location") { location.simulatedCoordinate = nil }
+                if simulationEnabled || location.simulatedCoordinate != nil {
+                    Section("Developer") {
+                        if simulationEnabled {
+                            Button("Simulate location", systemImage: "hand.tap") { placingSimulatedLocation = true }
+                        }
+                        if location.simulatedCoordinate != nil {
+                            Button("Use real GPS", systemImage: "location") { location.simulatedCoordinate = nil }
+                        }
                     }
                 }
                 Divider()

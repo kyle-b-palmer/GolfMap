@@ -41,6 +41,21 @@ final class CourseRepository {
     func load() async {
         guard state != .loading, state != .loaded else { return }
         state = .loading
+        await performLoad()
+    }
+
+    /// Picks up traced-course changes while the current list stays on screen.
+    func reload() async {
+        guard state != .loading else { return }
+        await performLoad()
+    }
+
+    private var isLoadingInBackground = false
+
+    private func performLoad() async {
+        guard !isLoadingInBackground else { return }
+        isLoadingInBackground = true
+        defer { isLoadingInBackground = false }
         let started = ContinuousClock.now
         let userCoursesURL = userCoursesURL
         let bundledURL = bundledURL
@@ -62,6 +77,17 @@ final class CourseRepository {
             state = .failed(error.localizedDescription)
             Self.logger.error("Course load failed: \(error.localizedDescription)")
         }
+    }
+
+    var userCourses: UserCourseStore { UserCourseStore(url: userCoursesURL) }
+
+    func deleteUserCourse(_ name: String) async {
+        do {
+            try userCourses.delete(course: name)
+        } catch {
+            Self.logger.error("Deleting traced course failed: \(error.localizedDescription)")
+        }
+        await reload()
     }
 
     func features(for course: String) -> [GolfFeature] {

@@ -53,11 +53,19 @@ Regenerate it only when a Flutter behavior change is intended, and fix the match
 
 ## Screenshots in the simulator
 
-Debug builds open a course's round directly when the `GolfMapOpenCourse` default is set. Use a persistent default rather than a launch argument, because the round's background location session can relaunch the app without arguments.
+Debug builds read two persistent defaults on launch:
+
+- `GolfMapOpenCourse` opens that course's round in place of Home.
+- `GolfMapHomeRoute` opens `settings`, `clubBag`, or `latestRound` (the newest saved round's scorecard).
+
+Use defaults rather than launch arguments, because the round's background location session can relaunch the app without arguments. Write them into the app container's plist: `defaults write <bundle id>` inside the simulator doesn't reach a sandboxed app.
 
 ```sh
-xcrun simctl spawn <device> defaults write com.golfmapapp.golfMapFlutter GolfMapOpenCourse "Brackenridge Golf Course"
+prefs="$(xcrun simctl get_app_container <device> com.golfmapapp.golfMapFlutter data)/Library/Preferences/com.golfmapapp.golfMapFlutter"
+xcrun simctl spawn <device> defaults write "$prefs" GolfMapOpenCourse "Brackenridge Golf Course"
 xcrun simctl location <device> set 29.451549,-98.476608
 xcrun simctl launch --terminate-running-process <device> com.golfmapapp.golfMapFlutter
-xcrun simctl spawn <device> defaults delete com.golfmapapp.golfMapFlutter GolfMapOpenCourse
+xcrun simctl spawn <device> defaults delete "$prefs" GolfMapOpenCourse
 ```
+
+`scripts/seed_legacy_round.sh <device>` writes a Flutter-format saved round and clears the import marker, so the next launch exercises the Flutter data import.
