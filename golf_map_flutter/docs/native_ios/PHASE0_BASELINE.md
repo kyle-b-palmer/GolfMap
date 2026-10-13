@@ -113,7 +113,8 @@ Each item must exist natively, or be explicitly dropped, before cutover.
 | Question | Decision for now |
 | --- | --- |
 | Minimum OS | iOS 18.2, watchOS 10 |
-| Main-screen design | Active-round layout from the plan: header, yardage dock sheet, selection bar, placement banner |
+| Main-screen design | Active-round layout from the plan: header, yardage dock, selection bar, placement banner. The dock is a custom bottom panel rather than a system sheet, because a presented sheet blocks other presentations such as the End Round dialog. |
+| Hole framing | Measure where the tee and green land after the first camera guess and correct, so the hole fits whatever space the dock leaves (dock size changes with Dynamic Type) |
 | Offline rendering | Course overlays must render without map tiles |
 | Unfinished round | Persist after every action and offer to resume on launch |
 | Watch protocol v2 | Additive: optional `eventId` and `protocolVersion`; v1 peers fall back to proximity matching |
@@ -135,6 +136,11 @@ These are current behavior, not intended product rules. The port reproduces them
 9. **Non-numeric hole labels.** Flutter `holesForCourse` would crash on them; the Swift port sorts them after numeric holes.
 10. **Altitude is dropped** when parsing geometry.
 11. **Dispersion never groups nearby shots.** The bucket key includes the raw latitude, so shots only merge when their latitudes are identical and the 8-yard grid has no effect.
+12. **Watch swing detection didn't compile.** On the checkpoint the swing detector's callback passed an IMU session that `GolfRoundWatchViewModel` didn't accept. The native Watch target saves the session and passes its ID to `recordDetectedSwing`.
+
+Fixed in the port (no fixture depends on them):
+
+- An identified remote undo whose pin was already gone fell back to proximity and could delete a different pin. It now matches by event ID only.
 
 ## Pending device work
 

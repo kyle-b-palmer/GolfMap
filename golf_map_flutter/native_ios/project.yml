@@ -1,0 +1,176 @@
+name: GolfMap
+options:
+  bundleIdPrefix: com.golfmapapp
+  deploymentTarget:
+    iOS: "18.2"
+    watchOS: "10.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: true
+  groupSortPosition: top
+
+settings:
+  base:
+    DEVELOPMENT_TEAM: YTNK6X9E6B
+    CODE_SIGN_STYLE: Automatic
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    MARKETING_VERSION: "2.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    DEAD_CODE_STRIPPING: YES
+    LOCALIZATION_PREFERS_STRING_CATALOGS: YES
+    SWIFT_EMIT_LOC_STRINGS: YES
+
+packages:
+  GolfKit:
+    path: GolfKit
+
+targets:
+  GolfMap:
+    type: application
+    platform: iOS
+    sources:
+      - path: App
+        excludes: ["Info.plist"]
+      - path: LiveActivity/LiveActivityAttributes.swift
+      - path: LiveActivity/LiveActivityShared.swift
+      - path: LiveActivity/LiveActivityIntents.swift
+      - path: ../assets/courses/san_antonio_courses.json
+        buildPhase: resources
+    dependencies:
+      - package: GolfKit
+        product: GolfCore
+      - package: GolfKit
+        product: GolfSync
+      - package: GolfKit
+        product: GolfDesign
+      - target: GolfRoundWidget
+      - target: GolfMapWatch
+    entitlements:
+      path: App/GolfMap.entitlements
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.golfmapapp.golfMapFlutter
+        PRODUCT_NAME: GolfMap
+        INFOPLIST_FILE: App/Info.plist
+        TARGETED_DEVICE_FAMILY: "1,2"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS: YES
+
+  GolfRoundWidget:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: LiveActivity
+        excludes: ["Info.plist"]
+    dependencies:
+      - package: GolfKit
+        product: GolfCore
+      - package: GolfKit
+        product: GolfSync
+      - package: GolfKit
+        product: GolfDesign
+      - sdk: WidgetKit.framework
+      - sdk: SwiftUI.framework
+    entitlements:
+      path: LiveActivity/GolfRoundWidget.entitlements
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.golfmapapp.golfMapFlutter.GolfRoundWidget
+        PRODUCT_NAME: GolfRoundWidgetExtension
+        INFOPLIST_FILE: LiveActivity/Info.plist
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: GolfRoundWidget
+        TARGETED_DEVICE_FAMILY: "1,2"
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME: WidgetBackground
+        SKIP_INSTALL: YES
+
+  GolfMapWatch:
+    type: application
+    platform: watchOS
+    sources:
+      - path: Watch
+        excludes: ["Info.plist"]
+    dependencies:
+      - package: GolfKit
+        product: GolfCore
+      - package: GolfKit
+        product: GolfSync
+      - package: GolfKit
+        product: GolfDesign
+      - target: GolfMapWatchWidget
+    entitlements:
+      path: Watch/GolfMapWatch.entitlements
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.golfmapapp.golfMapFlutter.watchkitapp
+        PRODUCT_NAME: GolfMapWatch
+        INFOPLIST_FILE: Watch/Info.plist
+        GENERATE_INFOPLIST_FILE: YES
+        TARGETED_DEVICE_FAMILY: "4"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        SKIP_INSTALL: YES
+
+  GolfMapWatchWidget:
+    type: app-extension
+    platform: watchOS
+    sources:
+      - path: WatchWidget
+        excludes: ["Info.plist"]
+    dependencies:
+      - sdk: WidgetKit.framework
+      - sdk: SwiftUI.framework
+    entitlements:
+      path: WatchWidget/GolfMapWatchWidget.entitlements
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.golfmapapp.golfMapFlutter.watchkitapp.widget
+        PRODUCT_NAME: GolfMapWatchWidgetExtension
+        INFOPLIST_FILE: WatchWidget/Info.plist
+        GENERATE_INFOPLIST_FILE: YES
+        TARGETED_DEVICE_FAMILY: "4"
+        SKIP_INSTALL: YES
+
+  GolfMapTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: AppTests
+    dependencies:
+      - target: GolfMap
+      - package: GolfKit
+        product: GolfCore
+      - package: GolfKit
+        product: GolfSync
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.golfmapapp.golfMapFlutter.tests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/GolfMap.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/GolfMap"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+
+schemes:
+  GolfMap:
+    build:
+      targets:
+        GolfMap: all
+        GolfMapTests: [test]
+    test:
+      gatherCoverageData: true
+      targets:
+        - GolfMapTests
+        - package: GolfKit/GolfCoreTests
+        - package: GolfKit/GolfSyncTests
+        - package: GolfKit/GolfDesignTests
+    run:
+      config: Debug
+    archive:
+      config: Release
+  GolfMapWatch:
+    build:
+      targets:
+        GolfMapWatch: all
+    run:
+      config: Debug

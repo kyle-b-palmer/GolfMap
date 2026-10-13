@@ -189,7 +189,7 @@ public enum RoundAction: Hashable, Sendable {
     case setPreferredTee(label: String?)
     /// Scores/putts/hole from the shared Watch and widget state (the phone takes them as given).
     case applyRemoteTotals(scores: [String: Int], putts: [String: Int], selectedHole: String?)
-    /// Remote undo of a pin, by event ID when available, otherwise the last pin within 25 yards.
+    /// Remote undo of a pin: by event ID only when one is given (version 2), otherwise the last pin within 25 yards.
     case applyRemoteUndo(hole: String, point: Coordinate, pinEventID: String?)
 }
 
@@ -345,8 +345,8 @@ public enum RoundEngine {
         case let .applyRemoteUndo(hole, point, pinEventID):
             var pins = state.sortedPins(hole)
             let index: Int?
-            if let pinEventID, let exact = pins.lastIndex(where: { $0.id == pinEventID }) {
-                index = exact
+            if let pinEventID {
+                index = pins.lastIndex { $0.id == pinEventID }
             } else {
                 index = pins.lastIndex { GeoMath.yardsBetween($0.coordinate, point) < remotePinDedupYards }
             }

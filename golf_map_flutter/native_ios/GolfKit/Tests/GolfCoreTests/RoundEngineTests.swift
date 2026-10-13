@@ -104,6 +104,9 @@ struct RoundEngineTests {
         #expect(state.currentPins.map(\.id) == ["b"])
         #expect(state.currentPins.first?.shotNumber == 1)
 
+        state = run([.applyRemoteUndo(hole: "1", point: near, pinEventID: "a")], from: state)
+        #expect(state.currentPins.map(\.id) == ["b"], "an already-applied identified undo never falls back to proximity")
+
         state = run([.applyRemoteUndo(hole: "1", point: fairway, pinEventID: nil)], from: state)
         #expect(state.currentPins.isEmpty, "version 1 undo falls back to 25-yard proximity")
     }

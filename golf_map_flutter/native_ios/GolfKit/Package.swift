@@ -19,5 +19,6 @@ let package = Package(
             resources: [.copy("Fixtures")]
         ),
         .testTarget(name: "GolfSyncTests", dependencies: ["GolfSync", "GolfCore"]),
+        .testTarget(name: "GolfDesignTests", dependencies: ["GolfDesign"]),
     ]
 )

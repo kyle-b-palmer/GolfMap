@@ -1,0 +1,245 @@
+import Foundation
+import GolfCore
+import GolfDesign
+import GolfSync
+import Observation
+import os
+
+/// Per-hole geometry, recomputed only when the hole changes.
+struct HoleContext: Equatable {
+    var hole: String
+    var features: [GolfFeature]
+    var green: Coordinate?
+    var orientation: HoleOrientation?
+    var tees: [TeeOption]
+    var yardage: Int?
+
+    init(course: String, hole: String, courseFeatures: [GolfFeature], preferredTee: String?) {
+        self.hole = hole
+        features = HoleGeometry.features(courseFeatures, course: course, hole: hole)
+        green = HoleGeometry.greenCenter(features)
+        orientation = HoleGeometry.orientation(features)
+        tees = HoleGeometry.teeOptions(features)
+        let tee = preferredTee.flatMap { HoleGeometry.teeOption(features, label: $0) } ?? tees.first
+        yardage = HoleGeometry.holeYardage(features, teeID: tee?.featureID)
+    }
+}
+
+struct MapOverlay: Identifiable {
+    var id: Int
+    var coordinates: [Coordinate]
+    var color: RGB
+    var border: RGB
+    var opacity: Double
+    var isActive: Bool
+
+    static func build(_ features: [GolfFeature], course: String, hole: String) -> [MapOverlay] {
+        var overlays: [MapOverlay] = []
+        for feature in features {
+            guard let type = feature.featureType, let style = GolfMapPalette.fill(for: type) else { continue }
+            let active = feature.isActive(course: course, hole: hole)
+            for ring in feature.geometry.rings where ring.count >= 3 {
+                overlays.append(MapOverlay(
+                    id: overlays.count,
+                    coordinates: ring,
+                    color: style.color,
+                    border: type == "tee" ? GolfMapPalette.teeBorder : style.color,
+                    opacity: active ? style.active : style.inactive,
+                    isActive: active
+                ))
+            }
+        }
+        // Active features draw last so they sit above neighbouring holes.
+        return overlays.filter { !$0.isActive } + overlays.filter(\.isActive)
+    }
+}
+
+/// Owns the active round: applies actions through `RoundEngine`, persists after every change,
+/// and keeps the App Group snapshot (Watch and Live Activity) in step.
+@Observable
+@MainActor
+final class RoundStore {
+    private(set) var round: RoundState
+    private(set) var hole: HoleContext {
+        didSet { refreshMapContent() }
+    }
+    private(set) var mapOverlays: [MapOverlay] = []
+    private(set) var holeLines: [[Coordinate]] = []
+    private(set) var banner: String?
+    var selectedPinID: String?
+
+    let courseFeatures: [GolfFeature]
+    private let repository: RoundRepository
+    private let shared: SharedRoundStore
+    private var autoAdvance = AutoAdvanceTracker()
+    private var lastPublishedRevision = 0
+    private var lastPublishedYards: Int?
+    private var observer: DarwinNotificationObserver?
+    private var bannerTask: Task<Void, Never>?
+
+    private static let logger = Logger(subsystem: "com.golfmapapp.golfMapFlutter", category: "round")
+
+    init(round: RoundState, courseFeatures: [GolfFeature], repository: RoundRepository, shared: SharedRoundStore = .shared) {
+        self.round = round
+        self.courseFeatures = courseFeatures
+        self.repository = repository
+        self.shared = shared
+        hole = HoleContext(course: round.courseName, hole: round.selectedHole, courseFeatures: courseFeatures, preferredTee: round.preferredTeeLabel)
+        refreshMapContent()
+    }
+
+    private func refreshMapContent() {
+        mapOverlays = MapOverlay.build(courseFeatures, course: round.courseName, hole: hole.hole)
+        holeLines = hole.features.filter { $0.isType("hole") }.flatMap(\.geometry.lineStrings)
+    }
+
+    func activate() {
+        repository.saveActive(round)
+        publish(yardsToGreen: nil)
+        observer = DarwinNotificationObserver(name: GolfRoundSharedState.changedNotification) { [weak self] in
+            MainActor.assumeIsolated { self?.consumeSharedChanges() }
+        }
+    }
+
+    func deactivate() {
+        observer = nil
+    }
+
+    // MARK: Actions
+
+    func send(_ action: RoundAction) {
+        let transition = RoundEngine.apply(action, to: round)
+        guard transition.changed || !transition.effects.isEmpty else { return }
+        round = transition.state
+        var undos: [GolfRoundGpsPin] = []
+        for effect in transition.effects {
+            switch effect {
+            case .message(let text):
+                show(text)
+            case .pinAdded(_, let shotNumber, let yards):
+                show(yards.map { "Shot \(shotNumber) · \($0) yd to green" } ?? "Shot \(shotNumber) marked")
+            case .pinRejectedHoleLocked:
+                show("Unlock the hole to add shots")
+            case .pinIgnoredDuplicate:
+                break
+            case .pinRemoved(let hole, let pin):
+                undos.append(PhoneRoundSync.undoEntry(for: pin, hole: hole))
+                if selectedPinID == pin.id { selectedPinID = nil }
+            case .holeChanged:
+                break
+            }
+        }
+        if hole.hole != round.selectedHole || isPreferredTeeChange(action) {
+            hole = HoleContext(course: round.courseName, hole: round.selectedHole, courseFeatures: courseFeatures, preferredTee: round.preferredTeeLabel)
+            selectedPinID = nil
+            autoAdvance = AutoAdvanceTracker()
+        }
+        if transition.changed {
+            repository.saveActive(round)
+            publish(yardsToGreen: lastPublishedYards, extraUndos: undos)
+        }
+    }
+
+    private func isPreferredTeeChange(_ action: RoundAction) -> Bool {
+        if case .setPreferredTee = action { return true }
+        return false
+    }
+
+    func markShot(at point: Coordinate, from user: Coordinate?, source: PinSource) {
+        send(.addPin(
+            hole: round.selectedHole,
+            point: point,
+            source: source,
+            userLocation: user,
+            yardsToPin: yardsToGreen(from: point, features: hole.features),
+            teeLabel: round.preferredTeeLabel
+        ))
+    }
+
+    func finish() {
+        send(.lockAllHoles)
+        repository.finish(round)
+        shared.clear()
+        deactivate()
+    }
+
+    func discard() {
+        repository.discardActive()
+        shared.clear()
+        deactivate()
+    }
+
+    // MARK: Location
+
+    /// The fix used for distances: only within 1,200 yards of the hole, as in the Flutter app.
+    func gpsOrigin(_ user: Coordinate?) -> Coordinate? {
+        HoleGeometry.shotOrigin(user: user, hole.features)
+    }
+
+    func yardages(from origin: Coordinate?) -> GreenYardages? {
+        guard let origin, hole.green != nil else { return nil }
+        return HoleGeometry.greenYardages(from: origin, hole.features)
+    }
+
+    /// Called for each new fix: keeps the shared yardage current and runs auto-advance.
+    func locationChanged(_ user: Coordinate?, autoAdvanceEnabled: Bool) {
+        let yards = yardages(from: gpsOrigin(user))?.middle
+        if yards != lastPublishedYards {
+            publish(yardsToGreen: yards)
+        }
+        guard autoAdvanceEnabled, let user else { return }
+        if autoAdvance.update(onGreen: HoleGeometry.isPointInGreen(user, hole.features), now: .now) {
+            send(.nextHole)
+        }
+    }
+
+    // MARK: Shared state
+
+    private func publish(yardsToGreen: Int?, extraUndos: [GolfRoundGpsPin] = [], clearPending: Bool = false) {
+        let round = round
+        let green = hole.green
+        let updated = shared.update { previous in
+            var snapshot = PhoneRoundSync.snapshot(of: round, yardsToGreen: yardsToGreen, green: green, previous: previous)
+            if clearPending {
+                snapshot.pendingGpsPins = []
+                snapshot.pendingGpsPinUndos = []
+            }
+            snapshot.pendingGpsPinUndos.append(contentsOf: extraUndos)
+            return snapshot
+        }
+        shared.activeSessionId = round.sessionID
+        lastPublishedYards = yardsToGreen
+        if let updated { lastPublishedRevision = updated.revision }
+    }
+
+    /// Applies edits made by the Live Activity or Watch since the phone last published.
+    func consumeSharedChanges() {
+        guard let changes = shared.load(), changes.revision > lastPublishedRevision else { return }
+        let actions = PhoneRoundSync.actions(for: changes, round: round)
+        Self.logger.info("Applying \(actions.count) shared actions from revision \(changes.revision)")
+        for action in actions {
+            send(withPinYardage(action))
+        }
+        publish(yardsToGreen: lastPublishedYards, clearPending: true)
+    }
+
+    private func withPinYardage(_ action: RoundAction) -> RoundAction {
+        guard case let .addPin(pinHole, point, source, user, nil, tee) = action else { return action }
+        let features = pinHole == hole.hole ? hole.features : HoleGeometry.features(courseFeatures, course: round.courseName, hole: pinHole)
+        return .addPin(hole: pinHole, point: point, source: source, userLocation: user, yardsToPin: yardsToGreen(from: point, features: features), teeLabel: tee)
+    }
+
+    private func yardsToGreen(from point: Coordinate, features: [GolfFeature]) -> Int? {
+        HoleGeometry.greenCenter(features) == nil ? nil : HoleGeometry.greenYardages(from: point, features).middle
+    }
+
+    private func show(_ message: String) {
+        banner = message
+        bannerTask?.cancel()
+        bannerTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled else { return }
+            self?.banner = nil
+        }
+    }
+}
