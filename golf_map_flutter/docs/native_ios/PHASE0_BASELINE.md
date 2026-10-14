@@ -121,7 +121,7 @@ Each item must exist natively, or be explicitly dropped, before cutover.
 | Score target | Flutter kept it in screen state, so it reset when the round reopened. The port stores it in the round (`nil` follows course par) |
 | Watch protocol v2 | Additive: optional `eventId` and `protocolVersion`; v1 peers fall back to proximity matching |
 | GPS simulation | Hidden behind Developer settings |
-| Upload semantics | Unchanged from Flutter until Phase 6 |
+| Upload semantics | Same replace as Flutter (delete the course's rows, insert with IDs after the current maximum), but the deleted rows are read first and put back if the insert fails |
 | Live Activity | Created on the first round update and ended when the round screen closes, as Flutter did; it returns when the round reopens. Updates that only change the yardage are throttled to one every 5 seconds |
 | Health workout | One setting (Always, Ask each round, Never). A workout starts once per round session and never for a reopened round, then ends when the round is saved or discarded |
 | Sharing | Scorecard and recap images render with `ImageRenderer` at 3x. Saving a round shows the recap with share buttons; saved rounds and the in-round scorecard share too |
@@ -153,6 +153,11 @@ Fixed in the port (no fixture depends on them):
 - Without a location fix, Flutter's measurement chain never measured its segments, so every segment read zero. The port measures from the selected tee until a fix arrives. With a fix, it measures from the player as Flutter does.
 - Flutter had two health controls: a home-screen "Apple Health workout" toggle that decided for rounds started from home, and the Always/Ask/Never mode that only applied elsewhere. The port keeps the mode only; a Flutter user who had the home toggle off imports as Never.
 - Flutter ended the health workout whenever the round screen closed, so glancing at the course list cut a workout short and it didn't restart. The port keeps it running until the round is saved or discarded.
+- Drawing a tee or bunker deleted every other tee or bunker on that hole, although holes have several and imports keep them. Only greens and fairways replace; moving or copying follows the same rule (Flutter already exempted bunkers there).
+- The editor's Par and Hcp fields only took effect when a green was drawn, so changing par on an imported hole did nothing. They now update the hole's greens directly.
+- Renaming a new course kept the old name on features traced before the rename, so the save filed them under the old name and the GeoJSON export left them out. Every feature now takes the current name.
+- An OpenStreetMap search failure failed the whole course search, hiding database and built-in matches. It's now reported only when nothing else matched.
+- Closing the editor discarded unsaved work without asking; it now confirms. Saving the course with a shape edit in progress asks to save or discard that edit first.
 - The native targets' entitlements files were empty because XcodeGen regenerates them from `project.yml`; the App Group and HealthKit entitlements now live there, matching Flutter's targets.
 
 ## Pending device work
@@ -162,6 +167,8 @@ Fixed in the port (no fixture depends on them):
 - Outdoor review of the Phase 1 yardage dock.
 - Paired Watch checks for sync, pin transfer, and complications. The phone session only sends when a Watch is paired with the app installed, so the simulator never exercises it.
 - Live Activity content on device: the simulator confirms the activity starts (`liveactivitiesd` logs "Created activity"), but unsigned simulator builds have no App Group, so the widget can't read hole, score, or yardage. Check the Lock Screen and Dynamic Island on a signed device build, including the score buttons and the end of the activity when the round is saved.
+- Course editor on device: freehand drawing with one finger while pinching to zoom (a pinch can add a stray point; Undo removes it), dragging vertices at several zoom levels, and Walk mode outdoors. Then trace a course, save it, reopen it, and play a round on it.
+- Upload against designated test records once Supabase is restored: replace a test course, check row counts and geometry in the table, and force an insert failure to confirm the old rows come back. The stubbed tests cover the request sequence and the restore.
 - HealthKit on device: the permission prompt, a golf workout appearing in Health after saving, and the Ask prompt. Simulator builds aren't signed with the HealthKit entitlement.
 - Supabase: `xycsxghpvylyquigzdje.supabase.co` did not resolve on 2026-10-13 (likely a paused project). The bundled data covers every current course, but the remote fallback and course uploads need the project restored before they can be checked live.
 - Seed a Flutter install with saved rounds, traced courses, and settings, then install the native build over it and check the import in the UI. In the simulator, `scripts/seed_legacy_round.sh` has confirmed a Flutter-format round imports and opens on the scorecard; the device check still needs a real Flutter install.

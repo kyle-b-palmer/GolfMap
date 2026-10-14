@@ -3,7 +3,7 @@ import GolfCore
 import Observation
 import os
 
-/// Bundled courses plus courses the user traced or imported. Remote courses join this in Phase 6.
+/// Bundled courses plus courses the user traced or imported.
 @Observable
 @MainActor
 final class CourseRepository {
@@ -18,6 +18,9 @@ final class CourseRepository {
     private(set) var features: [GolfFeature] = []
     private(set) var catalog: [CourseCatalogEntry] = []
     private(set) var userCourseNames: [String] = []
+    /// Bundled (or, without the asset, Supabase) features, which the editor imports from as "Built-in".
+    private(set) var sourceFeatures: [GolfFeature] = []
+    private(set) var sourceCourseNames: [String] = []
 
     /// Traced-course rows in the bundled row format, appended after the bundled features like Flutter.
     nonisolated static let defaultUserCoursesURL = URL.applicationSupportDirectory
@@ -25,7 +28,7 @@ final class CourseRepository {
 
     private let userCoursesURL: URL
     private let bundledURL: URL?
-    private let remote: CourseRemoteClient
+    let remote: CourseRemoteClient
     private nonisolated static let logger = Logger(subsystem: "com.golfmapapp.golfMapFlutter", category: "courses")
 
     init(
@@ -66,11 +69,14 @@ final class CourseRepository {
                 let user = Self.loadUserFeatures(at: userCoursesURL)
                 let features = bundled + user
                 let userNames = Set(user.compactMap(\.courseName).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty })
-                return (features, CourseCatalog.build(features), userNames.sorted())
+                let sourceNames = Set(bundled.compactMap { $0.courseName?.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty })
+                return (features, CourseCatalog.build(features), userNames.sorted(), bundled, sourceNames.sorted())
             }.value
             features = decoded.0
             catalog = decoded.1
             userCourseNames = decoded.2
+            sourceFeatures = decoded.3
+            sourceCourseNames = decoded.4
             state = .loaded
             Self.logger.info("Loaded \(decoded.0.count) features, \(decoded.1.count) courses in \(ContinuousClock.now - started)")
         } catch {

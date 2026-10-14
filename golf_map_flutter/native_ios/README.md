@@ -56,7 +56,7 @@ Regenerate it only when a Flutter behavior change is intended, and fix the match
 Debug builds read two persistent defaults on launch:
 
 - `GolfMapOpenCourse` opens that course's round in place of Home.
-- `GolfMapHomeRoute` opens `settings`, `clubBag`, or `latestRound` (the newest saved round's scorecard).
+- `GolfMapHomeRoute` opens `settings`, `clubBag`, `latestRound` (the newest saved round's scorecard), `trace` (a new course in the editor), or `edit:<course>` (that course in the editor).
 - `GolfMapRoundRoute` set to `green` opens the green close-up once the round is showing.
 
 Use defaults rather than launch arguments, because the round's background location session can relaunch the app without arguments. Write them into the app container's plist: `defaults write <bundle id>` inside the simulator doesn't reach a sandboxed app.

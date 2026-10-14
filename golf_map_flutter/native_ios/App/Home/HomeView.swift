@@ -16,6 +16,7 @@ struct HomeView: View {
     @State private var sheet: HomeSheet?
     @State private var favoriteLimitAlert = false
     @State private var checkedRestore = false
+    @State private var editor: CourseEditorStore?
 
     /// An interrupted round reopens by itself at launch only if it changed this recently; older ones wait on Resume.
     private static let restoreWindow: TimeInterval = 12 * 60 * 60
@@ -27,6 +28,7 @@ struct HomeView: View {
                 .searchable(text: $query, prompt: "Course, city, or state")
                 .toolbar {
                     ToolbarItemGroup(placement: .primaryAction) {
+                        Button("Trace a course", systemImage: "pencil.and.outline") { editor = CourseEditorStore(repository: courses) }
                         Button("Club bag", systemImage: "bag") { sheet = .clubBag }
                         Button("Settings", systemImage: "gearshape") { sheet = .settings }
                     }
@@ -37,6 +39,9 @@ struct HomeView: View {
         }
         .fullScreenCover(item: $activeRound, onDismiss: { Task { await courses.reload() } }) { store in
             RoundView(store: store)
+        }
+        .fullScreenCover(item: $editor) { store in
+            CourseEditorView(store: store)
         }
         .sheet(item: $sheet) { sheet in
             NavigationStack {
@@ -58,12 +63,14 @@ struct HomeView: View {
         }
         #if DEBUG
         .onChange(of: courses.state == .loaded, initial: true) { _, loaded in
-            // Screenshot automation: `settings`, `clubBag`, or `latestRound`, set like `GolfMapOpenCourse`.
+            // Screenshot automation: `settings`, `clubBag`, `latestRound`, `trace`, or `edit:<course>`, set like `GolfMapOpenCourse`.
             guard loaded else { return }
             switch UserDefaults.standard.string(forKey: "GolfMapHomeRoute") {
             case "settings": sheet = .settings
             case "clubBag": sheet = .clubBag
             case "latestRound": if let round = rounds.savedRounds.first { path.append(round) }
+            case "trace": editor = CourseEditorStore(repository: courses)
+            case let route? where route.hasPrefix("edit:"): editCourse(String(route.dropFirst(5)))
             default: break
             }
         }
@@ -170,12 +177,12 @@ struct HomeView: View {
                         }
                     }
                 }
-                if !courses.userCourseNames.isEmpty {
-                    Section("Traced on this device") {
-                        ForEach(courses.userCourseNames, id: \.self) { name in
-                            courseRow(name: name, detail: "Traced course", isTraced: true)
-                        }
+                Section("Traced on this device") {
+                    ForEach(courses.userCourseNames, id: \.self) { name in
+                        courseRow(name: name, detail: "Traced course", isTraced: true)
                     }
+                    Button("Trace a course", systemImage: "pencil.and.outline") { editor = CourseEditorStore(repository: courses) }
+                        .frame(minHeight: GolfMetrics.minimumHitTarget)
                 }
             }
 
@@ -259,6 +266,7 @@ struct HomeView: View {
         .contextMenu {
             Button("Start round", systemImage: "play.fill") { choose(name) }
             Button(favorite ? "Unfavorite" : "Favorite", systemImage: favorite ? "star.slash" : "star") { toggleFavorite(name) }
+            Button("Edit course", systemImage: "pencil.and.outline") { editCourse(name) }
             if isTraced {
                 Button("Delete traced course", systemImage: "trash", role: .destructive) { courseToDelete = name }
             }
@@ -268,6 +276,12 @@ struct HomeView: View {
                 Button("Delete", systemImage: "trash", role: .destructive) { courseToDelete = name }
             }
         }
+    }
+
+    /// A course traced on this device opens as is; any other starts a local copy seeded from its data.
+    private func editCourse(_ name: String) {
+        let isLocal = courses.userCourseNames.contains(name.trimmingCharacters(in: .whitespaces))
+        editor = isLocal ? CourseEditorStore(existing: name, repository: courses) : CourseEditorStore(seed: name, repository: courses)
     }
 
     private func savedRoundRow(_ round: SavedRound) -> some View {
@@ -379,3 +393,5 @@ private struct DebugRoundHost: View {
     }
 }
 #endif
+
+extension CourseEditorStore: Identifiable {}
