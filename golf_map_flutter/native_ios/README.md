@@ -35,11 +35,23 @@ xcodebuild -project GolfMap.xcodeproj -scheme GolfMap \
   -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
   -derivedDataPath DerivedData CODE_SIGNING_ALLOWED=NO test
 
+# UI smoke tests: play, save, reopen, and restore a round; drag map points; trace, edit, and play a course
+xcodebuild -project GolfMap.xcodeproj -scheme GolfMapUITests \
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+  -derivedDataPath DerivedData CODE_SIGNING_ALLOWED=NO test
+
 # Watch app
 xcodebuild -project GolfMap.xcodeproj -scheme GolfMapWatch \
   -destination 'generic/platform=watchOS Simulator' \
   -derivedDataPath DerivedData CODE_SIGNING_ALLOWED=NO build
+
+# Release archive (unsigned), then check what it embeds
+xcodebuild -project GolfMap.xcodeproj -scheme GolfMap -configuration Release \
+  -destination 'generic/platform=iOS' -archivePath /tmp/GolfMap.xcarchive \
+  CODE_SIGNING_ALLOWED=NO archive
 ```
+
+The UI tests launch Debug builds with `-GolfMapUITestReset`, which deletes the app's Application Support folder and its preferences before anything loads, so each test starts from an empty install. Don't pass it to a build with data you want to keep.
 
 ## Parity fixtures
 
@@ -59,7 +71,7 @@ Debug builds read two persistent defaults on launch:
 - `GolfMapHomeRoute` opens `settings`, `clubBag`, `latestRound` (the newest saved round's scorecard), `trace` (a new course in the editor), or `edit:<course>` (that course in the editor).
 - `GolfMapRoundRoute` set to `green` opens the green close-up once the round is showing.
 
-Use defaults rather than launch arguments, because the round's background location session can relaunch the app without arguments. Write them into the app container's plist: `defaults write <bundle id>` inside the simulator doesn't reach a sandboxed app.
+Use defaults rather than launch arguments, because the round's background location session can relaunch the app without arguments. Write them into the app container's plist. `defaults write <bundle id>` inside the simulator creates a separate domain outside the container; the app still reads it, but it survives reinstalls and the UI-test reset, so a stray value there keeps redirecting launches. Clear it with `xcrun simctl spawn <device> defaults delete com.golfmapapp.golfMapFlutter`.
 
 ```sh
 prefs="$(xcrun simctl get_app_container <device> com.golfmapapp.golfMapFlutter data)/Library/Preferences/com.golfmapapp.golfMapFlutter"

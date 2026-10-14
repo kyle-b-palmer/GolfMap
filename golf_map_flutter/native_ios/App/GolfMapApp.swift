@@ -3,12 +3,19 @@ import SwiftUI
 
 @main
 struct GolfMapApp: App {
-    @State private var courses = CourseRepository()
-    @State private var location = LocationService()
-    @State private var rounds = RoundRepository()
-    @State private var library = CourseLibraryStore()
+    @State private var courses: CourseRepository
+    @State private var location: LocationService
+    @State private var rounds: RoundRepository
+    @State private var library: CourseLibraryStore
 
     init() {
+        #if DEBUG
+        UITestSupport.resetIfRequested()
+        #endif
+        _courses = State(initialValue: CourseRepository())
+        _location = State(initialValue: LocationService())
+        _rounds = State(initialValue: RoundRepository())
+        _library = State(initialValue: CourseLibraryStore())
         PhoneWatchSession.shared.activate()
     }
 

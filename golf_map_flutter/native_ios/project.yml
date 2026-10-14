@@ -160,6 +160,20 @@ targets:
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/GolfMap.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/GolfMap"
         BUNDLE_LOADER: "$(TEST_HOST)"
 
+  GolfMapUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: UITests
+    dependencies:
+      - target: GolfMap
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.golfmapapp.golfMapFlutter.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: GolfMap
+        SWIFT_STRICT_CONCURRENCY: minimal
+
 schemes:
   GolfMap:
     build:
@@ -177,6 +191,14 @@ schemes:
       config: Debug
     archive:
       config: Release
+  GolfMapUITests:
+    build:
+      targets:
+        GolfMap: all
+        GolfMapUITests: [test]
+    test:
+      targets:
+        - GolfMapUITests
   GolfMapWatch:
     build:
       targets:

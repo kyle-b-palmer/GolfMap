@@ -5,8 +5,13 @@ import Testing
 
 @MainActor
 @Suite("Course library")
-struct CourseLibraryStoreTests {
-    let defaults = UserDefaults(suiteName: "course-library-tests-\(UUID().uuidString)")!
+final class CourseLibraryStoreTests {
+    let suite = "course-library-tests-\(UUID().uuidString)"
+    lazy var defaults = UserDefaults(suiteName: suite)!
+
+    deinit {
+        UserDefaults.standard.removePersistentDomain(forName: suite)
+    }
 
     @Test func favoritesPersistAndStopAtFive() {
         let store = CourseLibraryStore(defaults: defaults)

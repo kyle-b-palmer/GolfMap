@@ -13,6 +13,7 @@ struct GreenCloseUpView: View {
     @State private var hole: String
     @State private var flag: Coordinate?
     @State private var dragging: Coordinate?
+    @State private var flagDragging: Bool?
     @State private var position: MapCameraPosition = .automatic
 
     init(store: RoundStore, imagery: Bool) {
@@ -32,6 +33,13 @@ struct GreenCloseUpView: View {
     private var defaultFlag: Coordinate? { HoleGeometry.greenCenter(holeFeatures) }
     private var effectiveFlag: Coordinate? { dragging ?? flag ?? defaultFlag }
 
+    private static let flagSize: CGFloat = 56
+
+    /// The flag is anchored at its base, so its marker sits half its height above the hole location.
+    private var flagHandle: [MapHandle<Bool>] {
+        effectiveFlag.map { [MapHandle(id: true, coordinate: $0, visualOffset: CGSize(width: 0, height: -Self.flagSize / 2))] } ?? []
+    }
+
     private var yards: Int? {
         guard let user = location.coordinate, let effectiveFlag else { return nil }
         return GeoMath.yardsBetween(user, effectiveFlag)
@@ -39,7 +47,7 @@ struct GreenCloseUpView: View {
 
     var body: some View {
         MapReader { proxy in
-            Map(position: $position, interactionModes: [.pan, .zoom, .rotate]) {
+            Map(position: $position, interactionModes: flagDragging == nil ? [.pan, .zoom, .rotate] : []) {
                 ForEach(greenRings.indices, id: \.self) { index in
                     MapPolygon(coordinates: greenRings[index].map(\.clCoordinate))
                         .foregroundStyle(GolfMapPalette.green.color.opacity(0.55))
@@ -56,18 +64,8 @@ struct GreenCloseUpView: View {
                             .foregroundStyle(GolfMapPalette.lostBallPin.color)
                             .shadow(color: .white, radius: 1)
                             .shadow(color: .black.opacity(0.6), radius: 3)
-                            .frame(minWidth: 56, minHeight: 56)
-                            .contentShape(Rectangle())
-                            .gesture(
-                                DragGesture(minimumDistance: 2, coordinateSpace: .global)
-                                    .onChanged { value in
-                                        dragging = proxy.convert(value.location, from: .global).map(Coordinate.init)
-                                    }
-                                    .onEnded { value in
-                                        flag = proxy.convert(value.location, from: .global).map(Coordinate.init) ?? flag
-                                        dragging = nil
-                                    }
-                            )
+                            .frame(minWidth: Self.flagSize, minHeight: Self.flagSize)
+                            .allowsHitTesting(false)
                             .accessibilityLabel("Hole location flag")
                             .accessibilityHint("Drag to where the hole is cut today")
                     }
@@ -76,6 +74,14 @@ struct GreenCloseUpView: View {
                 UserAnnotation()
             }
             .mapStyle(imagery ? .imagery(elevation: .flat) : .standard(elevation: .flat, emphasis: .muted, pointsOfInterest: .excludingAll))
+            .mapHandles(flagHandle, proxy: proxy, dragging: $flagDragging) { _, coordinate, ended in
+                if ended {
+                    flag = coordinate
+                    dragging = nil
+                } else {
+                    dragging = coordinate
+                }
+            }
         }
         .background(GolfMapPalette.courseBackground.color.ignoresSafeArea())
         .safeAreaInset(edge: .top, spacing: 0) { header }

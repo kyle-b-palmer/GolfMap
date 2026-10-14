@@ -29,10 +29,17 @@ struct HoleMapView: View {
     @State private var isFramedOnHole = false
     @State private var chainDrag: (index: Int, coordinate: Coordinate)?
     @State private var aimDrag: Coordinate?
+    @State private var dragging: MapTarget?
+
+    private enum MapTarget: Hashable {
+        case pin(String)
+        case chain(Int)
+        case aim
+    }
 
     var body: some View {
         MapReader { proxy in
-            Map(position: $position, interactionModes: [.pan, .zoom, .rotate]) {
+            Map(position: $position, interactionModes: dragging == nil ? [.pan, .zoom, .rotate] : []) {
                 if !layers.mapUnderCourse, let center = store.hole.green ?? store.hole.orientation?.tee {
                     MapPolygon(coordinates: Self.backgroundBox(around: center))
                         .foregroundStyle(GolfMapPalette.courseBackground.color)
@@ -56,8 +63,8 @@ struct HoleMapView: View {
                     }
                 }
                 idealLineContent
-                measurementContent(proxy: proxy)
-                clubAimContent(proxy: proxy)
+                measurementContent
+                clubAimContent
                 bunkerContent
                 if let green = store.hole.green {
                     Annotation("Green", coordinate: green.clCoordinate, anchor: .bottom) {
@@ -71,14 +78,11 @@ struct HoleMapView: View {
                 }
                 ForEach(store.round.currentPins) { pin in
                     Annotation(pinTitle(pin), coordinate: pin.coordinate.clCoordinate) {
-                        Button {
-                            store.selectedPinID = store.selectedPinID == pin.id ? nil : pin.id
-                        } label: {
-                            PinMarker(number: pin.shotNumber, lostBall: pin.pinType == .lostBall, selected: store.selectedPinID == pin.id)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel(pinTitle(pin))
-                        .accessibilityAddTraits(store.selectedPinID == pin.id ? .isSelected : [])
+                        PinMarker(number: pin.shotNumber, lostBall: pin.pinType == .lostBall, selected: store.selectedPinID == pin.id)
+                            .allowsHitTesting(false)
+                            .accessibilityLabel(pinTitle(pin))
+                            .accessibilityAddTraits(store.selectedPinID == pin.id ? [.isButton, .isSelected] : .isButton)
+                            .accessibilityAction { tapped(.pin(pin.id)) }
                     }
                     .annotationTitles(.hidden)
                 }
@@ -99,10 +103,7 @@ struct HoleMapView: View {
                 MapCompass()
                 MapScaleView()
             }
-            .onTapGesture { point in
-                guard let coordinate = proxy.convert(point, from: .local) else { return }
-                onTap(Coordinate(coordinate))
-            }
+            .mapHandles(handles, proxy: proxy, dragging: $dragging, onTap: tapped, onMapTap: onTap, onDrag: dragged)
             // The layout frame stops at the dock even though the map draws beneath it.
             .onGeometryChange(for: CGSize.self) { $0.size } action: { size in
                 let firstLayout = visibleSize == .zero
@@ -163,7 +164,7 @@ struct HoleMapView: View {
     }
 
     @MapContentBuilder
-    private func measurementContent(proxy: MapProxy) -> some MapContent {
+    private var measurementContent: some MapContent {
         let chain = displayedChain
         let origin = chain.isEmpty ? store.gpsOrigin(user) : store.chainOrigin(user)
         if let green = store.hole.green {
@@ -196,13 +197,10 @@ struct HoleMapView: View {
             }
             Annotation("Measure point \(index + 1)", coordinate: point.coordinate.clCoordinate) {
                 ChainMarker(number: index + 1, selected: store.selectedChainIndex == index)
-                    .onTapGesture { store.selectedChainIndex = store.selectedChainIndex == index ? nil : index }
-                    .gesture(draggable(proxy: proxy) { coordinate, ended in
-                        chainDrag = ended ? nil : (index, coordinate)
-                        if ended { store.moveChainPoint(index, to: coordinate, user: user) }
-                    }, including: store.round.isCurrentHoleLocked ? .subviews : .all)
+                    .allowsHitTesting(false)
                     .accessibilityLabel("Measure point \(index + 1), \(point.segmentYards) yards")
                     .accessibilityAddTraits(.isButton)
+                    .accessibilityAction { tapped(.chain(index)) }
             }
             .annotationTitles(.hidden)
         }
@@ -216,7 +214,7 @@ struct HoleMapView: View {
     }
 
     @MapContentBuilder
-    private func clubAimContent(proxy: MapProxy) -> some MapContent {
+    private var clubAimContent: some MapContent {
         if let target = aimDrag ?? store.clubAim {
             if let origin = user ?? store.gpsOrigin(user) {
                 let yards = GeoMath.yardsBetween(origin, target)
@@ -235,11 +233,7 @@ struct HoleMapView: View {
                     .foregroundStyle(GolfMapPalette.clubAim.color)
                     .shadow(color: .black.opacity(0.6), radius: 2)
                     .frame(width: GolfMetrics.minimumHitTarget, height: GolfMetrics.minimumHitTarget)
-                    .contentShape(Rectangle())
-                    .gesture(draggable(proxy: proxy) { coordinate, ended in
-                        aimDrag = ended ? nil : coordinate
-                        if ended { store.setClubAim(coordinate) }
-                    }, including: store.round.isCurrentHoleLocked ? .subviews : .all)
+                    .allowsHitTesting(false)
                     .accessibilityLabel("Club target")
             }
             .annotationTitles(.hidden)
@@ -262,15 +256,36 @@ struct HoleMapView: View {
         }
     }
 
-    /// Drags an annotation, reporting map coordinates as it moves and once more when released.
-    private func draggable(proxy: MapProxy, update: @escaping (Coordinate, _ ended: Bool) -> Void) -> some Gesture {
-        DragGesture(minimumDistance: 4, coordinateSpace: .global)
-            .onChanged { value in
-                if let coordinate = proxy.convert(value.location, from: .global) { update(Coordinate(coordinate), false) }
-            }
-            .onEnded { value in
-                if let coordinate = proxy.convert(value.location, from: .global) { update(Coordinate(coordinate), true) }
-            }
+    /// Pins select on tap; measure points and the club target also drag, unless the hole is locked.
+    private var handles: [MapHandle<MapTarget>] {
+        let movable = !store.round.isCurrentHoleLocked
+        var handles = displayedChain.enumerated().map { MapHandle(id: MapTarget.chain($0.offset), coordinate: $0.element.coordinate, isDraggable: movable) }
+        if let target = aimDrag ?? store.clubAim {
+            handles.append(MapHandle(id: .aim, coordinate: target, isDraggable: movable))
+        }
+        handles += store.round.currentPins.map { MapHandle(id: .pin($0.id), coordinate: $0.coordinate, isDraggable: false) }
+        return handles
+    }
+
+    private func tapped(_ target: MapTarget) {
+        switch target {
+        case .pin(let id): store.selectedPinID = store.selectedPinID == id ? nil : id
+        case .chain(let index): store.selectedChainIndex = store.selectedChainIndex == index ? nil : index
+        case .aim: break
+        }
+    }
+
+    private func dragged(_ target: MapTarget, to coordinate: Coordinate, ended: Bool) {
+        switch target {
+        case .chain(let index):
+            chainDrag = ended ? nil : (index, coordinate)
+            if ended { store.moveChainPoint(index, to: coordinate, user: user) }
+        case .aim:
+            aimDrag = ended ? nil : coordinate
+            if ended { store.setClubAim(coordinate) }
+        case .pin:
+            break
+        }
     }
 
     private func midpoint(_ a: Coordinate, _ b: Coordinate) -> CLLocationCoordinate2D {

@@ -12,6 +12,7 @@ struct CourseEditorView: View {
     @State private var imagery = true
     @State private var strokeActive = false
     @State private var draggingVertex: (index: Int, point: Coordinate)?
+    @State private var vertexPressed: Int?
     @State private var showingImport = false
     @State private var transfer: TransferRequest?
     @State private var transferHole = ""
@@ -142,7 +143,7 @@ struct CourseEditorView: View {
                     }
                 }
                 pendingContent
-                editContent(proxy)
+                editContent
                 if let user = store.user {
                     Annotation("You", coordinate: user.clCoordinate) {
                         Circle().fill(GolfMapPalette.measureLine.color).frame(width: 16, height: 16)
@@ -152,8 +153,13 @@ struct CourseEditorView: View {
                 }
             }
             .mapStyle(imagery ? .imagery : .standard(pointsOfInterest: .excludingAll))
-            .onTapGesture(coordinateSpace: .global) { point in
-                if let coordinate = proxy.convert(point, from: .global) { store.mapTapped(Coordinate(coordinate)) }
+            .mapHandles(vertexHandles, proxy: proxy, dragging: $vertexPressed, onTap: { store.deleteEditVertex($0) }, onMapTap: mapTap) { index, coordinate, ended in
+                if ended {
+                    store.moveEditVertex(index, to: coordinate)
+                    draggingVertex = nil
+                } else {
+                    draggingVertex = (index, coordinate)
+                }
             }
             .gesture(drawGesture(proxy), including: isDrawing ? .all : .subviews)
         }
@@ -162,7 +168,19 @@ struct CourseEditorView: View {
     private var isDrawing: Bool { store.mode == .draw && store.editing == nil }
 
     private var interactionModes: MapInteractionModes {
-        isDrawing || draggingVertex != nil ? [.zoom] : [.pan, .zoom]
+        isDrawing || vertexPressed != nil ? [.zoom] : [.pan, .zoom]
+    }
+
+    /// While drawing, the draw gesture already takes taps as points.
+    private var mapTap: ((Coordinate) -> Void)? {
+        guard !isDrawing else { return nil }
+        let store = store
+        return { store.mapTapped($0) }
+    }
+
+    /// Tap a vertex to delete it, drag it to move it.
+    private var vertexHandles: [MapHandle<Int>] {
+        (store.editing?.vertices ?? []).enumerated().map { MapHandle(id: $0.offset, coordinate: $0.element) }
     }
 
     private var visibleFeatures: [GolfFeature] {
@@ -187,7 +205,7 @@ struct CourseEditorView: View {
     }
 
     @MapContentBuilder
-    private func editContent(_ proxy: MapProxy) -> some MapContent {
+    private var editContent: some MapContent {
         if let session = store.editing {
             let vertices = session.vertices.enumerated().map { index, point in
                 draggingVertex?.index == index ? draggingVertex!.point : point
@@ -199,23 +217,11 @@ struct CourseEditorView: View {
             }
             ForEach(Array(vertices.enumerated()), id: \.offset) { index, point in
                 Annotation("Point \(index + 1)", coordinate: point.clCoordinate) {
-                    VertexHandle(isDragging: draggingVertex?.index == index)
-                        .onTapGesture { store.deleteEditVertex(index) }
-                        .gesture(
-                            DragGesture(minimumDistance: 4, coordinateSpace: .global)
-                                .onChanged { value in
-                                    if let coordinate = proxy.convert(value.location, from: .global) {
-                                        draggingVertex = (index, Coordinate(coordinate))
-                                    }
-                                }
-                                .onEnded { value in
-                                    if let coordinate = proxy.convert(value.location, from: .global) {
-                                        store.moveEditVertex(index, to: Coordinate(coordinate))
-                                    }
-                                    draggingVertex = nil
-                                }
-                        )
+                    VertexHandle(isDragging: vertexPressed == index)
+                        .allowsHitTesting(false)
                         .accessibilityLabel("Point \(index + 1)")
+                        .accessibilityAddTraits(.isButton)
+                        .accessibilityAction { store.deleteEditVertex(index) }
                         .accessibilityHint("Tap to delete. Drag to move.")
                 }
                 .annotationTitles(.hidden)
@@ -224,9 +230,9 @@ struct CourseEditorView: View {
     }
 
     private func drawGesture(_ proxy: MapProxy) -> some Gesture {
-        DragGesture(minimumDistance: 0, coordinateSpace: .global)
+        DragGesture(minimumDistance: 0)
             .onChanged { value in
-                guard let coordinate = proxy.convert(value.location, from: .global) else { return }
+                guard let coordinate = proxy.convert(value.location, from: .local) else { return }
                 store.drawStroke(Coordinate(coordinate), isStart: !strokeActive)
                 strokeActive = true
             }

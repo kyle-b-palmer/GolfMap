@@ -6,9 +6,10 @@ import Testing
 
 @MainActor
 @Suite("Round store")
-struct RoundStoreTests {
+final class RoundStoreTests {
     let features: [GolfFeature]
     let folder: URL
+    let suite = "round-store-tests-\(UUID().uuidString)"
     let shared: SharedRoundStore
     let companions = RecordingCompanions()
 
@@ -16,8 +17,12 @@ struct RoundStoreTests {
         let url = try #require(Bundle(for: RoundRepository.self).url(forResource: "san_antonio_courses", withExtension: "json"))
         features = try FeatureRowDecoder.decode(Data(contentsOf: url)).filter { $0.matchesCourse("Brackenridge Golf Course") }
         folder = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
-        let suite = "round-store-tests-\(UUID().uuidString)"
         shared = SharedRoundStore(suiteName: suite, notificationName: "com.golfmapapp.tests.\(suite)")
+    }
+
+    deinit {
+        UserDefaults.standard.removePersistentDomain(forName: suite)
+        try? FileManager.default.removeItem(at: folder)
     }
 
     func makeStore() -> RoundStore {

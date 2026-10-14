@@ -2,8 +2,8 @@
 # Writes a Flutter-format saved round into an installed simulator app's defaults and clears the native import
 # marker, so the next launch runs the legacy migration against it. Usage: scripts/seed_legacy_round.sh <simulator id>
 #
-# `simctl spawn defaults write <bundle id>` doesn't reach a sandboxed app's preferences, so this writes the
-# container's plist by path. The app must not be running.
+# This writes the container's plist by path. `simctl spawn defaults write <bundle id>` would create a domain
+# outside the container that survives reinstalls. The app must not be running.
 set -euo pipefail
 
 sim=${1:?simulator id}

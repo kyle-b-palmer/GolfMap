@@ -5,14 +5,19 @@ import Testing
 
 @MainActor
 @Suite("Legacy migration")
-struct LegacyMigrationTests {
+final class LegacyMigrationTests {
+    let suite = "legacy-migration-tests-\(UUID().uuidString)"
     let defaults: UserDefaults
     let folder: URL
 
     init() {
-        let suite = "legacy-migration-tests-\(UUID().uuidString)"
         defaults = UserDefaults(suiteName: suite)!
         folder = FileManager.default.temporaryDirectory.appending(path: suite)
+    }
+
+    deinit {
+        UserDefaults.standard.removePersistentDomain(forName: suite)
+        try? FileManager.default.removeItem(at: folder)
     }
 
     var migration: LegacyMigration {
