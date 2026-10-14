@@ -176,8 +176,15 @@ final class RoundStore {
         return lastTracked ?? selectedTeePoint ?? HoleGeometry.longestTee(hole.features) ?? user
     }
 
-    /// Flutter shows the ideal line only on an unlocked hole with no measurement chain.
-    var showsIdealLine: Bool { !round.isCurrentHoleLocked && chain.isEmpty }
+    /// Farther than this from the green, the player isn't playing the hole, so the ideal line is hidden.
+    static let idealLineMaxYards = 1000
+
+    /// Where the ideal line starts, if it shows: as in Flutter, only on an unlocked hole with no measurement chain.
+    func idealLineStart(_ user: Coordinate?) -> Coordinate? {
+        guard !round.isCurrentHoleLocked, chain.isEmpty, let start = gpsOrigin(user), let green = hole.green,
+              GeoMath.yardsBetween(start, green) <= Self.idealLineMaxYards else { return nil }
+        return start
+    }
 
     func activate() {
         repository.saveActive(round)

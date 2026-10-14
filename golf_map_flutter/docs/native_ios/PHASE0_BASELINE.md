@@ -158,6 +158,7 @@ Fixed in the port (no fixture depends on them):
 - Renaming a new course kept the old name on features traced before the rename, so the save filed them under the old name and the GeoJSON export left them out. Every feature now takes the current name.
 - An OpenStreetMap search failure failed the whole course search, hiding database and built-in matches. It's now reported only when nothing else matched.
 - Closing the editor discarded unsaved work without asking; it now confirms. Saving the course with a shape edit in progress asks to save or discard that edit first.
+- Flutter drew the ideal line from the player whenever they were within 1,200 yards of any point on the hole, so a player on another hole got a long line across the course. The port hides it when the player is more than 1,000 yards from the green; yardages and measuring still work out to Flutter's 1,200.
 - The native targets' entitlements files were empty because XcodeGen regenerates them from `project.yml`; the App Group and HealthKit entitlements now live there, matching Flutter's targets.
 
 ## Pending device work

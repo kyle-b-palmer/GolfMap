@@ -173,6 +173,21 @@ final class RoundStoreTests {
         #expect(store.clubAim == green)
     }
 
+    @Test func idealLineHidesBeyondAThousandYardsFromTheGreen() throws {
+        let store = makeStore()
+        let green = try #require(store.hole.green)
+        let tee = try #require(store.hole.tees.first?.point)
+        let bearing = GeoMath.bearing(green, tee)
+        let meters = { (yards: Double) in yards / GeoMath.yardsPerMeter }
+        let near = GeoMath.destination(from: green, bearing: bearing, meters: meters(990))
+        let far = GeoMath.destination(from: green, bearing: bearing, meters: meters(1010))
+        #expect(HoleGeometry.isNearHole(far, store.hole.features), "still close enough to measure from")
+
+        #expect(store.idealLineStart(near) == near)
+        #expect(store.idealLineStart(far) == nil)
+        #expect(store.idealLineStart(nil) == nil)
+    }
+
     @Test func interruptedRoundRestoresFromDisk() throws {
         let store = makeStore()
         store.activate()

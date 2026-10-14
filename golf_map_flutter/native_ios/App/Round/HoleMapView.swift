@@ -144,7 +144,7 @@ struct HoleMapView: View {
 
     @MapContentBuilder
     private var idealLineContent: some MapContent {
-        if layers.idealLine, store.showsIdealLine, let start = store.gpsOrigin(user), let green = store.hole.green {
+        if layers.idealLine, let start = store.idealLineStart(user), let green = store.hole.green {
             let segments = HoleGeometry.plannedShots(start: start, green: green, store.hole.features)
             ForEach(segments, id: \.shotNumber) { segment in
                 MapPolyline(coordinates: [segment.from.clCoordinate, segment.to.clCoordinate])
