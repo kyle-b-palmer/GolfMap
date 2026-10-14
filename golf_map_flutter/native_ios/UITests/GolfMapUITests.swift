@@ -9,6 +9,14 @@ final class GolfMapUITests: XCTestCase {
 
     override func setUp() async throws {
         continueAfterFailure = false
+        // The location prompt can appear well after the action that asked for it on a slow machine; whenever it
+        // blocks a step, allow it rather than letting the default handler dismiss it as a denial.
+        addUIInterruptionMonitor(withDescription: "Location permission") { alert in
+            let allow = alert.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Allow While'")).firstMatch
+            guard allow.exists else { return false }
+            allow.tap()
+            return true
+        }
     }
 
     /// Attaches what was on screen to every failure, so CI results show it.
@@ -214,8 +222,8 @@ final class GolfMapUITests: XCTestCase {
 
     private func allowLocationIfAsked(_ app: XCUIApplication) {
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-        let allow = springboard.alerts.buttons["Allow While Using App"]
-        if allow.waitForExistence(timeout: 3) { allow.tap() }
+        let allow = springboard.alerts.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Allow While'")).firstMatch
+        if allow.waitForExistence(timeout: 5) { allow.tap() }
     }
 
     /// A point in the part of the map above `panel` (the round's dock by default); the map extends beneath it.

@@ -46,7 +46,6 @@ jobs:
           echo "SIMULATOR=$id" >> "$GITHUB_ENV"
           xcrun simctl boot "$id" || true
           xcrun simctl bootstatus "$id"
-          xcrun simctl privacy "$id" grant location com.golfmapapp.golfMapFlutter
           xcrun simctl location "$id" set 29.451549,-98.476608
 
       - name: Package tests
@@ -60,6 +59,7 @@ jobs:
 
       - name: UI smoke tests
         run: >
+          xcrun simctl privacy "$SIMULATOR" grant location com.golfmapapp.golfMapFlutter &&
           xcodebuild -project GolfMap.xcodeproj -scheme GolfMapUITests
           -destination "platform=iOS Simulator,id=$SIMULATOR"
           -derivedDataPath DerivedData -resultBundlePath UITests.xcresult
