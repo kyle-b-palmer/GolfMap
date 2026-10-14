@@ -183,7 +183,7 @@ final class GolfMapUITests: XCTestCase {
 
     private func launch(reset: Bool = true) -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["-healthWorkoutMode", "never"]
+        app.launchArguments = ["-GolfMapUITesting", "-healthWorkoutMode", "never"]
         if reset { app.launchArguments.append("-GolfMapUITestReset") }
         app.launch()
         return app
@@ -192,7 +192,10 @@ final class GolfMapUITests: XCTestCase {
     private func startRound(_ app: XCUIApplication, at course: String) {
         let search = app.searchFields.firstMatch
         XCTAssertTrue(search.waitForExistence(timeout: timeout))
-        search.tap()
+        for _ in 0..<3 where !app.keyboards.firstMatch.exists {
+            search.tap()
+            _ = app.keyboards.firstMatch.waitForExistence(timeout: 5)
+        }
         search.typeText(course)
         let row = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", course)).firstMatch
         XCTAssertTrue(row.waitForExistence(timeout: timeout))

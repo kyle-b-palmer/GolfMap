@@ -51,7 +51,7 @@ xcodebuild -project GolfMap.xcodeproj -scheme GolfMap -configuration Release \
   CODE_SIGNING_ALLOWED=NO archive
 ```
 
-The UI tests launch Debug builds with `-GolfMapUITestReset`, which deletes the app's Application Support folder and its preferences before anything loads, so each test starts from an empty install. Don't pass it to a build with data you want to keep.
+The UI tests launch Debug builds with `-GolfMapUITesting`, which skips the background location session (otherwise the system relaunches the app between tests, and that instance can stand in for the next launch). Most also pass `-GolfMapUITestReset`, which deletes the app's Application Support folder and its preferences before anything loads, so the test starts from an empty install. Don't pass it to a build with data you want to keep.
 
 ## Parity fixtures
 

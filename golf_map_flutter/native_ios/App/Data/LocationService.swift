@@ -33,7 +33,7 @@ final class LocationService {
         if serviceSession == nil {
             serviceSession = CLServiceSession(authorization: .whenInUse, fullAccuracyPurposeKey: "PreciseYardage")
         }
-        if inRound, backgroundSession == nil {
+        if inRound, backgroundSession == nil, Self.allowsBackgroundSession {
             backgroundSession = CLBackgroundActivitySession()
         }
         guard updatesTask == nil else { return }
@@ -54,6 +54,14 @@ final class LocationService {
                 self?.refreshStatus()
             }
         }
+    }
+
+    private static var allowsBackgroundSession: Bool {
+        #if DEBUG
+        UITestSupport.allowsBackgroundLocation
+        #else
+        true
+        #endif
     }
 
     func endRound() {
