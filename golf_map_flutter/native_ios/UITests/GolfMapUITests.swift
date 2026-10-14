@@ -11,10 +11,20 @@ final class GolfMapUITests: XCTestCase {
         continueAfterFailure = false
     }
 
+    /// Attaches what was on screen to every failure, so CI results show it.
+    nonisolated override func record(_ issue: XCTIssue) {
+        var issue = issue
+        let png = MainActor.assumeIsolated { XCUIScreen.main.screenshot().pngRepresentation }
+        let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+        attachment.lifetime = .keepAlways
+        issue.add(attachment)
+        super.record(issue)
+    }
+
     // MARK: Rounds
 
     func testPlaySaveAndReopenRound() throws {
-        let app = launch()
+        var app = launch()
         startRound(app, at: course)
 
         let score = element(app, "Score")
@@ -32,8 +42,10 @@ final class GolfMapUITests: XCTestCase {
         endRound(app, choice: "Save round")
         XCTAssertTrue(app.navigationBars["Round saved"].waitForExistence(timeout: timeout))
         app.buttons["Done"].tap()
+        XCTAssertTrue(app.searchFields.firstMatch.waitForExistence(timeout: timeout))
 
-        clearSearch(app)
+        app.terminate()
+        app = launch(reset: false)
         let saved = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@ AND label CONTAINS 'over 2 holes'", "\(course),")).firstMatch
         scrollTo(saved, in: app)
         XCTAssertTrue(saved.exists, "The saved round should be listed on Home")
@@ -123,17 +135,17 @@ final class GolfMapUITests: XCTestCase {
 
         app.buttons["Green"].tap()
         app.buttons["Draw"].tap()
-        let map = app.maps.firstMatch
-        for (dx, dy) in [(0.35, 0.25), (0.65, 0.25), (0.65, 0.45), (0.35, 0.45)] {
-            map.coordinate(withNormalizedOffset: CGVector(dx: dx, dy: dy)).tap()
+        let panel = app.textFields["Course name (required)"]
+        for (x, y) in [(0.35, 0.35), (0.65, 0.35), (0.65, 0.75), (0.35, 0.75)] {
+            visibleMapPoint(app, x: x, y: y, above: panel).tap()
         }
         XCTAssertTrue(text(app, containing: "Draw green · 4 points").waitForExistence(timeout: timeout))
         app.buttons["Save green"].tap()
         XCTAssertTrue(text(app, containing: "Hole 1 of 18 · 1 features").waitForExistence(timeout: timeout))
 
         app.buttons["Bunker"].tap()
-        let stroke = map.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.15))
-        stroke.press(forDuration: 0.05, thenDragTo: stroke.withOffset(CGVector(dx: 60, dy: 120)), withVelocity: 300, thenHoldForDuration: 0.1)
+        let stroke = visibleMapPoint(app, x: 0.12, y: 0.45, above: panel)
+        stroke.press(forDuration: 0.05, thenDragTo: stroke.withOffset(CGVector(dx: 40, dy: 90)), withVelocity: 300, thenHoldForDuration: 0.1)
         let drawn = text(app, containing: "Draw bunker ·")
         XCTAssertTrue(drawn.waitForExistence(timeout: timeout))
         let drawnPoints = Int(drawn.label.split(separator: "·").last?.split(separator: " ").first ?? "") ?? 0
@@ -197,23 +209,18 @@ final class GolfMapUITests: XCTestCase {
         button.tap()
     }
 
-    private func clearSearch(_ app: XCUIApplication) {
-        let cancel = app.buttons["Cancel"]
-        if cancel.waitForExistence(timeout: 3) { cancel.tap() }
-    }
-
     private func allowLocationIfAsked(_ app: XCUIApplication) {
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         let allow = springboard.alerts.buttons["Allow While Using App"]
         if allow.waitForExistence(timeout: 3) { allow.tap() }
     }
 
-    /// A point in the part of the round map the dock doesn't cover; the map itself extends under the dock.
-    private func visibleMapPoint(_ app: XCUIApplication, x: CGFloat, y: CGFloat) -> XCUICoordinate {
+    /// A point in the part of the map above `panel` (the round's dock by default); the map extends beneath it.
+    private func visibleMapPoint(_ app: XCUIApplication, x: CGFloat, y: CGFloat, above panel: XCUIElement? = nil) -> XCUICoordinate {
         let map = app.maps.firstMatch.frame
-        let dockTop = element(app, "Show hole details").frame.minY
+        let bottom = (panel ?? element(app, "Show hole details")).frame.minY
         let origin = app.coordinate(withNormalizedOffset: .zero)
-        return origin.withOffset(CGVector(dx: map.minX + map.width * x, dy: map.minY + (dockTop - map.minY) * y))
+        return origin.withOffset(CGVector(dx: map.minX + map.width * x, dy: map.minY + (bottom - map.minY) * y))
     }
 
     private func scrollTo(_ element: XCUIElement, in app: XCUIApplication) {

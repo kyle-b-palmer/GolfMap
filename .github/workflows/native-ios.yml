@@ -41,9 +41,13 @@ jobs:
           import json, sys
           runtimes = json.load(sys.stdin)["devices"]
           phones = [d for r, ds in sorted(runtimes.items()) if "iOS" in r for d in ds if d["name"].startswith("iPhone")]
-          print(phones[-1]["udid"])')
+          preferred = [d for d in phones if d["name"] == "iPhone 17 Pro"]
+          print((preferred or phones)[-1]["udid"])')
           echo "SIMULATOR=$id" >> "$GITHUB_ENV"
           xcrun simctl boot "$id" || true
+          xcrun simctl bootstatus "$id"
+          xcrun simctl privacy "$id" grant location com.golfmapapp.golfMapFlutter
+          xcrun simctl location "$id" set 29.451549,-98.476608
 
       - name: Package tests
         run: cd GolfKit && swift test
