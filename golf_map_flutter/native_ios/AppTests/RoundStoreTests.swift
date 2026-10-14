@@ -1,0 +1,279 @@
+import Foundation
+import GolfCore
+import GolfSync
+import Testing
+@testable import GolfMap
+
+@MainActor
+@Suite("Round store")
+final class RoundStoreTests {
+    let features: [GolfFeature]
+    let folder: URL
+    let suite = "round-store-tests-\(UUID().uuidString)"
+    let shared: SharedRoundStore
+    let companions = RecordingCompanions()
+
+    init() throws {
+        let url = try #require(Bundle(for: RoundRepository.self).url(forResource: "san_antonio_courses", withExtension: "json"))
+        features = try FeatureRowDecoder.decode(Data(contentsOf: url)).filter { $0.matchesCourse("Brackenridge Golf Course") }
+        folder = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        shared = SharedRoundStore(suiteName: suite, notificationName: "com.golfmapapp.tests.\(suite)")
+    }
+
+    deinit {
+        UserDefaults.standard.removePersistentDomain(forName: suite)
+        try? FileManager.default.removeItem(at: folder)
+    }
+
+    func makeStore() -> RoundStore {
+        RoundStore(
+            round: RoundState.start(course: "Brackenridge Golf Course", features: features),
+            courseFeatures: features,
+            repository: RoundRepository(directory: folder),
+            shared: shared,
+            companions: companions
+        )
+    }
+
+    @Test func activatingPersistsAndPublishes() throws {
+        let store = makeStore()
+        store.activate()
+        defer { store.deactivate() }
+        let snapshot = try #require(shared.load())
+        #expect(snapshot.courseName == "Brackenridge Golf Course")
+        #expect(snapshot.sessionId == store.round.sessionID)
+        #expect(snapshot.greenLatitude != 0)
+        #expect(RoundRepository(directory: folder).activeRound?.id == store.round.id)
+    }
+
+    @Test func companionsFollowTheRound() {
+        let store = makeStore()
+        store.activate()
+        store.send(.setScore(hole: "1", strokes: 5))
+        #expect(companions.published.last?.scores["1"] == 5)
+        store.deactivate()
+        #expect(companions.leftCount == 1)
+        store.activate()
+        store.finish()
+        #expect(companions.ended == [store.round.sessionID])
+    }
+
+    @Test func liveActivityEditsAreApplied() throws {
+        let store = makeStore()
+        store.activate()
+        defer { store.deactivate() }
+        let green = try #require(store.hole.green)
+        shared.update { current in
+            guard var state = current else { return nil }
+            state.scores[state.selectedHole] = 5
+            state.pendingGpsPins.append(GolfRoundGpsPin(hole: state.selectedHole, latitude: green.latitude, longitude: green.longitude, eventId: "lock-screen"))
+            state.revision += 1
+            return state
+        }
+        store.consumeSharedChanges()
+        #expect(store.round.currentScore == 5)
+        #expect(store.round.currentPins.map(\.id) == ["lock-screen"])
+        #expect(store.round.currentPins.first?.yardsToPin == 0)
+        #expect(shared.load()?.pendingGpsPins.isEmpty == true, "consumed pins are cleared")
+    }
+
+    @Test func deletingPinPublishesIdentifiedUndo() throws {
+        let store = makeStore()
+        store.activate()
+        defer { store.deactivate() }
+        let green = try #require(store.hole.green)
+        store.markShot(at: green, from: nil, source: .map)
+        let pin = try #require(store.round.currentPins.first)
+        store.send(.deletePin(hole: store.round.selectedHole, id: pin.id))
+        #expect(shared.load()?.pendingGpsPinUndos.map(\.eventId) == [pin.id])
+    }
+
+    @Test func finishingSavesLockedRoundAndClearsShared() {
+        let store = makeStore()
+        store.activate()
+        store.send(.setScore(hole: "1", strokes: 4))
+        store.finish()
+        let repository = RoundRepository(directory: folder)
+        #expect(repository.activeRound == nil)
+        #expect(repository.savedRounds.first?.scores["1"] == 4)
+        #expect(repository.savedRounds.first?.lockedHoles.count == store.round.holes.count)
+        #expect(shared.load() == nil)
+    }
+
+    @Test func autoAdvanceWaitsOnTheGreenAndStopsOnTheLastHole() throws {
+        let store = makeStore()
+        let start = Date(timeIntervalSince1970: 1_000)
+        let green = try #require(store.hole.green)
+        store.locationChanged(green, autoAdvanceEnabled: true, now: start)
+        store.locationChanged(green, autoAdvanceEnabled: true, now: start.addingTimeInterval(12))
+        #expect(store.round.selectedHole == "1", "needs more than 12 seconds")
+        store.locationChanged(green, autoAdvanceEnabled: true, now: start.addingTimeInterval(12.5))
+        #expect(store.round.selectedHole == "2")
+        #expect(store.banner == "Advanced to hole 2")
+
+        let last = try #require(store.round.holes.last)
+        store.send(.selectHole(last))
+        let lastGreen = try #require(store.hole.green)
+        store.locationChanged(lastGreen, autoAdvanceEnabled: true, now: start)
+        store.locationChanged(lastGreen, autoAdvanceEnabled: true, now: start.addingTimeInterval(60))
+        #expect(store.round.selectedHole == last)
+    }
+
+    @Test func measuringFromTheTeeAndSavingKeepsTheChainAsPins() throws {
+        let store = makeStore()
+        store.activate()
+        let green = try #require(store.hole.green)
+        let tee = try #require(store.hole.tees.first?.point)
+        let landing = GeoMath.destination(from: tee, bearing: GeoMath.bearing(tee, green), meters: 200)
+
+        store.addChainPoint(landing, user: nil)
+        store.addChainPoint(green, user: nil)
+        #expect(store.chain.map(\.segmentYards) == [GeoMath.yardsBetween(tee, landing), GeoMath.yardsBetween(landing, green)])
+
+        store.deleteChainPoint(0, user: nil)
+        #expect(store.chain.map(\.segmentYards) == [GeoMath.yardsBetween(tee, green)], "the next segment is remeasured")
+        store.addChainPoint(landing, user: nil)
+
+        store.send(.setLocked(hole: store.round.selectedHole, locked: true))
+        store.addChainPoint(tee, user: nil)
+        #expect(store.chain.count == 2, "locked holes ignore taps")
+        store.send(.setLocked(hole: store.round.selectedHole, locked: false))
+
+        store.finish()
+        let saved = try #require(RoundRepository(directory: folder).savedRounds.first)
+        #expect(saved.measurementChains["1"]?.count == 2)
+        #expect(saved.pinnedShots["1"]?.map(\.shotNumber) == [1, 2])
+        #expect(saved.pinnedShots["1"]?.first?.yardsToPin == 0, "the first point is on the green")
+    }
+
+    @Test func lostBallAddsAStrokeAndDeletingAnyPinRemovesOne() throws {
+        let store = makeStore()
+        let green = try #require(store.hole.green)
+        store.send(.setScore(hole: "1", strokes: 3))
+        store.markShot(at: green, from: green, source: .lostBall)
+        #expect(store.round.currentScore == 4)
+        #expect(store.round.currentPins.first?.pinType == .lostBall)
+
+        store.markShot(at: green, from: green, source: .gps)
+        #expect(store.round.currentScore == 4, "ordinary pins leave the score alone")
+        let pin = try #require(store.round.currentPins.last)
+        store.send(.deletePin(hole: "1", id: pin.id))
+        #expect(store.round.currentScore == 3, "Flutter subtracts a stroke for any deleted pin")
+    }
+
+    @Test func scoreStartsAtParAndSubmittingLocksAndMovesOn() throws {
+        let store = makeStore()
+        let par = store.round.currentPar
+        try #require(par > 0)
+        #expect(store.displayedScore == par)
+        #expect(store.round.totalScore == 0, "an unentered hole doesn't count toward the total")
+
+        store.submitScore()
+        #expect(store.round.score("1") == par)
+        #expect(store.round.lockedHoles == ["1"])
+        #expect(store.round.selectedHole == "2")
+
+        store.setDisplayedScore(store.displayedScore + 1)
+        store.submitScore()
+        #expect(store.round.score("2") == store.round.par("2") + 1)
+    }
+
+    @Test func lostBallBeforeAnyScoreCountsFromPar() throws {
+        let store = makeStore()
+        let green = try #require(store.hole.green)
+        store.markShot(at: green, from: green, source: .lostBall)
+        #expect(store.round.currentScore == store.round.currentPar + 1)
+    }
+
+    @Test func submittingTheLastHoleStaysOnIt() throws {
+        let store = makeStore()
+        let last = try #require(store.round.holes.last)
+        store.send(.selectHole(last))
+        store.submitScore()
+        #expect(store.round.selectedHole == last)
+        #expect(store.round.isCurrentHoleLocked)
+    }
+
+    @Test func clubTargetNeedsAnUnlockedHole() throws {
+        let store = makeStore()
+        let green = try #require(store.hole.green)
+        store.send(.setLocked(hole: "1", locked: true))
+        store.setClubAim(green)
+        #expect(store.clubAim == nil)
+        #expect(store.banner == "Unlock the hole to set a club target")
+        store.send(.setLocked(hole: "1", locked: false))
+        store.setClubAim(green)
+        #expect(store.clubAim == green)
+    }
+
+    @Test func idealLineHidesBeyondAThousandYardsFromTheGreen() throws {
+        let store = makeStore()
+        let green = try #require(store.hole.green)
+        let tee = try #require(store.hole.tees.first?.point)
+        let bearing = GeoMath.bearing(green, tee)
+        let meters = { (yards: Double) in yards / GeoMath.yardsPerMeter }
+        let near = GeoMath.destination(from: green, bearing: bearing, meters: meters(990))
+        let far = GeoMath.destination(from: green, bearing: bearing, meters: meters(1010))
+        #expect(HoleGeometry.isNearHole(far, store.hole.features), "still close enough to measure from")
+
+        #expect(store.idealLineStart(near) == near)
+        #expect(store.idealLineStart(far) == nil)
+        #expect(store.idealLineStart(nil) == nil)
+    }
+
+    @Test func interruptedRoundRestoresFromDisk() throws {
+        let store = makeStore()
+        store.activate()
+        store.send(.setScore(hole: "1", strokes: 5))
+        store.send(.setPutts(hole: "1", putts: 2))
+        store.send(.setLocked(hole: "1", locked: true))
+        store.send(.setScoreTarget(80))
+        store.send(.selectHole("2"))
+        store.deactivate()
+
+        let restored = try #require(RoundRepository(directory: folder).activeRound)
+        #expect(restored == store.round)
+        #expect(restored.selectedHole == "2")
+        #expect(restored.scoreTarget == 80)
+        #expect(restored.lockedHoles == ["1"])
+    }
+
+    @Test func reopeningASavedRoundKeepsItsIdentityAndDate() throws {
+        let first = makeStore()
+        first.activate()
+        first.send(.setScore(hole: "1", strokes: 4))
+        first.finish()
+        let saved = try #require(RoundRepository(directory: folder).savedRounds.first)
+
+        let repository = RoundRepository(directory: folder)
+        let reopened = RoundStore(
+            round: RoundState.reopen(saved, features: features),
+            courseFeatures: features,
+            repository: repository,
+            shared: shared,
+            companions: companions
+        )
+        reopened.activate()
+        #expect(reopened.round.lockedHoles.count == reopened.round.holes.count, "saved rounds reopen locked")
+        reopened.send(.setLocked(hole: "1", locked: false))
+        reopened.send(.setScore(hole: "1", strokes: 6))
+        reopened.finish()
+
+        let rounds = RoundRepository(directory: folder).savedRounds
+        #expect(rounds.count == 1)
+        #expect(rounds.first?.id == saved.id)
+        #expect(rounds.first?.playedAt == saved.playedAt)
+        #expect(rounds.first?.scores["1"] == 6)
+    }
+}
+
+@MainActor
+final class RecordingCompanions: RoundCompanions {
+    var published: [GolfRoundSharedState] = []
+    var leftCount = 0
+    var ended: [String] = []
+
+    func roundPublished(_ state: GolfRoundSharedState) { published.append(state) }
+    func roundLeft() { leftCount += 1 }
+    func roundEnded(sessionId: String) { ended.append(sessionId) }
+}
