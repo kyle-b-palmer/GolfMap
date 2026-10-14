@@ -16,39 +16,54 @@ public struct YardageReadout: View {
         self.gps = gps
     }
 
-    private func shown(_ value: Int?) -> String {
-        guard gps.allowsYardage, let value else { return "—" }
-        return "\(value)"
-    }
+    /// Without a usable fix there is nothing to read, so the readout says so instead of showing placeholders.
+    private var shownMiddle: Int? { gps.allowsYardage ? middle : nil }
 
     public var body: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .firstTextBaseline, spacing: GolfSpacing.m) {
-                middleText
-                frontBack(axis: .vertical)
-                Spacer(minLength: 0)
-                GPSStatusBadge(gps)
-            }
-            VStack(alignment: .leading, spacing: GolfSpacing.xxs) {
-                HStack {
-                    middleText
+        Group {
+            if let shownMiddle {
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .center, spacing: GolfSpacing.l) {
+                        middleText(shownMiddle)
+                        frontBack(axis: .vertical)
+                        Spacer(minLength: 0)
+                        GPSStatusBadge(gps)
+                    }
+                    VStack(alignment: .leading, spacing: GolfSpacing.xs) {
+                        HStack {
+                            middleText(shownMiddle)
+                            Spacer(minLength: 0)
+                            GPSStatusBadge(gps)
+                        }
+                        frontBack(axis: .horizontal)
+                    }
+                }
+            } else {
+                HStack(spacing: GolfSpacing.s) {
+                    Text("No yardage")
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(.golfSecondaryText)
                     Spacer(minLength: 0)
                     GPSStatusBadge(gps)
                 }
-                frontBack(axis: .horizontal)
             }
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityText)
     }
 
-    private var middleText: some View {
-        Text(shown(middle))
-            .font(GolfType.yardage(size: middleSize))
-            .foregroundStyle(.golfPrimaryText)
-            .contentTransition(.numericText())
-            .lineLimit(1)
-            .minimumScaleFactor(0.6)
+    private func middleText(_ yards: Int) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("\(yards)")
+                .font(GolfType.yardage(size: middleSize))
+                .foregroundStyle(.golfPrimaryText)
+                .contentTransition(.numericText())
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+            Text("yd to center")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.golfSecondaryText)
+        }
     }
 
     @ViewBuilder
@@ -57,15 +72,15 @@ public struct YardageReadout: View {
             ? AnyLayout(VStackLayout(alignment: .leading, spacing: GolfSpacing.xxs))
             : AnyLayout(HStackLayout(spacing: GolfSpacing.m))
         layout {
-            labeled("F", shown(front))
-            labeled("B", shown(back))
+            if let front { labeled("Front", front) }
+            if let back { labeled("Back", back) }
         }
     }
 
-    private func labeled(_ label: String, _ value: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: GolfSpacing.xxs) {
-            Text(label).font(.caption.weight(.bold)).foregroundStyle(.golfSecondaryText)
-            Text(value).font(GolfType.secondaryNumber).foregroundStyle(.golfPrimaryText)
+    private func labeled(_ label: String, _ yards: Int) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: GolfSpacing.xs) {
+            Text(label).font(.subheadline.weight(.semibold)).foregroundStyle(.golfSecondaryText)
+            Text("\(yards)").font(GolfType.secondaryNumber).foregroundStyle(.golfPrimaryText)
         }
     }
 

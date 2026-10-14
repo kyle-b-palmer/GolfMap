@@ -7,7 +7,6 @@ struct SettingsView: View {
     @AppStorage(SettingsKey.showScoreTarget) private var showScoreTarget = true
     @AppStorage(SettingsKey.keepScreenAwake) private var keepAwake = true
     @AppStorage(SettingsKey.mapImagery) private var imagery = true
-    @AppStorage(SettingsKey.courseOverlaysEnabled) private var courseOverlays = true
     @AppStorage(SettingsKey.idealLineEnabled) private var idealLine = true
     @AppStorage(SettingsKey.showShotDispersion) private var dispersion = false
     @AppStorage(SettingsKey.healthWorkoutMode) private var healthMode = HealthWorkoutMode.always.rawValue
@@ -26,14 +25,14 @@ struct SettingsView: View {
             }
 
             Section {
-                Toggle("Satellite imagery", isOn: $imagery)
-                Toggle("Map under course", isOn: $courseOverlays)
+                Picker("Map style", selection: $imagery) {
+                    Text("Satellite").tag(true)
+                    Text("Map").tag(false)
+                }
                 Toggle("Ideal line", isOn: $idealLine)
                 Toggle("Shot dispersion", isOn: $dispersion)
             } header: {
                 Text("Map")
-            } footer: {
-                Text("Turn off Map under course to draw only the course shapes. That view works without a data connection.")
             }
 
             Section {

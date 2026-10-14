@@ -161,6 +161,39 @@ final class RoundStoreTests {
         #expect(store.round.currentScore == 3, "Flutter subtracts a stroke for any deleted pin")
     }
 
+    @Test func scoreStartsAtParAndSubmittingLocksAndMovesOn() throws {
+        let store = makeStore()
+        let par = store.round.currentPar
+        try #require(par > 0)
+        #expect(store.displayedScore == par)
+        #expect(store.round.totalScore == 0, "an unentered hole doesn't count toward the total")
+
+        store.submitScore()
+        #expect(store.round.score("1") == par)
+        #expect(store.round.lockedHoles == ["1"])
+        #expect(store.round.selectedHole == "2")
+
+        store.setDisplayedScore(store.displayedScore + 1)
+        store.submitScore()
+        #expect(store.round.score("2") == store.round.par("2") + 1)
+    }
+
+    @Test func lostBallBeforeAnyScoreCountsFromPar() throws {
+        let store = makeStore()
+        let green = try #require(store.hole.green)
+        store.markShot(at: green, from: green, source: .lostBall)
+        #expect(store.round.currentScore == store.round.currentPar + 1)
+    }
+
+    @Test func submittingTheLastHoleStaysOnIt() throws {
+        let store = makeStore()
+        let last = try #require(store.round.holes.last)
+        store.send(.selectHole(last))
+        store.submitScore()
+        #expect(store.round.selectedHole == last)
+        #expect(store.round.isCurrentHoleLocked)
+    }
+
     @Test func clubTargetNeedsAnUnlockedHole() throws {
         let store = makeStore()
         let green = try #require(store.hole.green)

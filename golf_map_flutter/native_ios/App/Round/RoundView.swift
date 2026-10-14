@@ -11,21 +11,20 @@ struct RoundView: View {
     @AppStorage(SettingsKey.mapImagery) private var imagery = true
     @AppStorage(SettingsKey.keepScreenAwake) private var keepAwake = true
     @AppStorage(SettingsKey.gpsSimulationEnabled) private var simulationEnabled = false
-    @AppStorage(SettingsKey.courseOverlaysEnabled) private var mapUnderCourse = true
     @AppStorage(SettingsKey.idealLineEnabled) private var idealLine = true
     @AppStorage(SettingsKey.bunkerDistancesOnMap) private var bunkerDistances = false
     @AppStorage(SettingsKey.showShotDispersion) private var dispersion = false
     @AppStorage(SettingsKey.healthWorkoutMode) private var healthMode = HealthWorkoutMode.always.rawValue
     @State private var askToStartWorkout = false
     @State private var savedRecap: RoundRecap?
-    @State private var dockExpanded = false
+    @State private var dockExpanded = true
     @State private var recenterToken = 0
     @State private var placement: MapPlacement?
     @State private var confirmEnd = false
     @State private var showingGreen = false
 
     private var layers: MapLayers {
-        MapLayers(imagery: imagery, mapUnderCourse: mapUnderCourse, idealLine: idealLine, bunkerDistances: bunkerDistances, dispersion: dispersion)
+        MapLayers(imagery: imagery, idealLine: idealLine, bunkerDistances: bunkerDistances, dispersion: dispersion)
     }
 
     var body: some View {
@@ -76,7 +75,7 @@ struct RoundView: View {
             }
         }
         .fullScreenCover(isPresented: $showingGreen) {
-            GreenCloseUpView(store: store, imagery: imagery && mapUnderCourse)
+            GreenCloseUpView(store: store, imagery: imagery)
         }
         #if DEBUG
         .task {
@@ -202,6 +201,19 @@ struct RoundView: View {
                 if store.clubAim != nil {
                     Button("Clear club target", systemImage: "xmark.circle") { store.setClubAim(nil) }
                 }
+                if store.hole.tees.count > 1 {
+                    Picker(selection: Binding(
+                        get: { store.round.preferredTeeLabel ?? store.hole.tees.first?.label ?? "" },
+                        set: { store.send(.setPreferredTee(label: $0)) }
+                    )) {
+                        ForEach(store.hole.tees, id: \.label) { tee in
+                            Text(tee.label).tag(tee.label)
+                        }
+                    } label: {
+                        Label("Tees", systemImage: "arrow.up.to.line")
+                    }
+                    .pickerStyle(.menu)
+                }
                 Toggle("Auto-advance on green", systemImage: "forward", isOn: $autoAdvance)
                 Toggle("Keep screen awake", systemImage: "sun.max", isOn: $keepAwake)
                 if simulationEnabled || location.simulatedCoordinate != nil {
@@ -232,9 +244,11 @@ struct RoundView: View {
 
     private var layersMenu: some View {
         Menu {
-            Toggle("Satellite imagery", systemImage: "globe.americas", isOn: $imagery)
-                .disabled(!mapUnderCourse)
-            Toggle("Map under course", systemImage: "map", isOn: $mapUnderCourse)
+            Picker("Map style", selection: $imagery) {
+                Label("Satellite", systemImage: "globe.americas").tag(true)
+                Label("Map", systemImage: "map").tag(false)
+            }
+            .pickerStyle(.inline)
             Divider()
             Toggle("Ideal line", systemImage: "point.topleft.down.to.point.bottomright.curvepath", isOn: $idealLine)
             Toggle("Bunker distances", systemImage: "circle.dashed", isOn: $bunkerDistances)

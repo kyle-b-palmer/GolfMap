@@ -240,7 +240,30 @@ final class RoundStore {
         return false
     }
 
+    /// The score the dock shows: par until the player enters one, so the steppers start from par.
+    var displayedScore: Int {
+        round.currentScore == 0 && !round.isCurrentHoleLocked ? round.currentPar : round.currentScore
+    }
+
+    func setDisplayedScore(_ strokes: Int) {
+        send(.setScore(hole: round.selectedHole, strokes: strokes))
+    }
+
+    /// Keeps the shown score (par if none was entered), locks the hole and its shots, and moves to the next hole.
+    func submitScore() {
+        let hole = round.selectedHole
+        guard !round.isCurrentHoleLocked else { return }
+        let strokes = displayedScore
+        send(.setScore(hole: hole, strokes: strokes))
+        send(.setLocked(hole: hole, locked: true))
+        if hole != round.holes.last { send(.nextHole) }
+        show("Hole \(hole): \(strokes) submitted")
+    }
+
     func markShot(at point: Coordinate, from user: Coordinate?, source: PinSource) {
+        if source == .lostBall, round.currentScore == 0, !round.isCurrentHoleLocked {
+            send(.setScore(hole: round.selectedHole, strokes: displayedScore))
+        }
         send(.addPin(
             hole: round.selectedHole,
             point: point,

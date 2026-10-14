@@ -90,6 +90,19 @@ struct RoundEngineTests {
         #expect(!delete.changed)
     }
 
+    @Test func lockedHoleRejectsRemotePinsAndUndoWhileAnotherHoleIsShown() {
+        var state = run([
+            .addPin(hole: "1", point: tee, source: .remote(eventID: "a", lostBall: false), userLocation: nil, yardsToPin: nil, teeLabel: nil),
+            .setLocked(hole: "1", locked: true),
+            .nextHole,
+        ])
+        let add = RoundEngine.apply(.addPin(hole: "1", point: fairway, source: .remote(eventID: "b", lostBall: false), userLocation: nil, yardsToPin: nil, teeLabel: nil), to: state)
+        #expect(!add.changed)
+        #expect(add.effects == [.pinRejectedHoleLocked])
+        state = run([.applyRemoteUndo(hole: "1", point: tee, pinEventID: "a")], from: state)
+        #expect(state.sortedPins("1").count == 1)
+    }
+
     @Test func remotePinsDedupeWithin25YardsButLostBallsDoNot() {
         let near = GeoMath.destination(from: fairway, bearing: 0, meters: 10)
         var state = run([.addPin(hole: "1", point: fairway, source: .remote(eventID: "e1", lostBall: false), userLocation: nil, yardsToPin: nil, teeLabel: nil)])

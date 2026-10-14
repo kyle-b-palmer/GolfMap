@@ -5,7 +5,6 @@ enum SettingsKey {
     static let keepScreenAwake = "keepScreenAwake"
     static let showScoreTarget = "showScoreTarget"
     static let idealLineEnabled = "idealLineEnabled"
-    static let courseOverlaysEnabled = "courseOverlaysEnabled"
     static let showShotDispersion = "showShotDispersion"
     static let bunkerDistancesOnMap = "bunkerDistancesOnMap"
     static let healthWorkoutMode = "healthWorkoutMode"

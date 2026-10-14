@@ -38,13 +38,18 @@ final class GolfMapUITests: XCTestCase {
         let score = element(app, "Score")
         XCTAssertTrue(score.waitForExistence(timeout: timeout))
         let startingScore = count(score)
+        XCTAssertEqual(startingScore, 4, "The score starts at the hole's par")
         increase(score)
         XCTAssertEqual(count(score), startingScore + 1)
         increase(element(app, "Putts"))
         XCTAssertEqual(count(element(app, "Putts")), 1)
 
+        app.buttons["Submit score"].tap()
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Hole 2'")).firstMatch.waitForExistence(timeout: timeout), "Submitting moves to the next hole")
+        app.buttons["Previous hole"].tap()
+        XCTAssertTrue(app.buttons["Unlock hole 1"].waitForExistence(timeout: timeout), "Submitting locks the hole")
+        XCTAssertFalse(element(app, "Score").isEnabled)
         app.buttons["Next hole"].tap()
-        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Hole 2'")).firstMatch.waitForExistence(timeout: timeout))
         increase(element(app, "Score"))
 
         endRound(app, choice: "Save round")
@@ -229,7 +234,7 @@ final class GolfMapUITests: XCTestCase {
     /// A point in the part of the map above `panel` (the round's dock by default); the map extends beneath it.
     private func visibleMapPoint(_ app: XCUIApplication, x: CGFloat, y: CGFloat, above panel: XCUIElement? = nil) -> XCUICoordinate {
         let map = app.maps.firstMatch.frame
-        let bottom = (panel ?? element(app, "Show hole details")).frame.minY
+        let bottom = (panel ?? app.buttons["dockHandle"]).frame.minY
         let origin = app.coordinate(withNormalizedOffset: .zero)
         return origin.withOffset(CGVector(dx: map.minX + map.width * x, dy: map.minY + (bottom - map.minY) * y))
     }

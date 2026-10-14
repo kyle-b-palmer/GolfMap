@@ -24,6 +24,8 @@ final class LocationService {
 
     private var authorized = true
     private var precise = true
+    /// Core Location stops sending fixes while the device isn't moving; the last one stays current until it moves.
+    private var stationary = false
     private var updatesTask: Task<Void, Never>?
     private var stalenessTask: Task<Void, Never>?
     private var serviceSession: CLServiceSession?
@@ -82,6 +84,7 @@ final class LocationService {
     private func handle(_ update: CLLocationUpdate) {
         authorized = !(update.authorizationDenied || update.authorizationDeniedGlobally)
         precise = !update.accuracyLimited
+        stationary = update.stationary
         if let fix = update.location, fix.horizontalAccuracy >= 0 {
             location = fix
         }
@@ -91,7 +94,7 @@ final class LocationService {
     private func refreshStatus() {
         let next = GPSStatus.classify(
             accuracyMeters: location?.horizontalAccuracy,
-            ageSeconds: location.map { -$0.timestamp.timeIntervalSinceNow } ?? 0,
+            ageSeconds: stationary ? 0 : location.map { -$0.timestamp.timeIntervalSinceNow } ?? 0,
             authorized: authorized,
             precise: precise,
             simulated: simulatedCoordinate != nil

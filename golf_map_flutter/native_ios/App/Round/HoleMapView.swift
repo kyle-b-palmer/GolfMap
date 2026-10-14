@@ -6,8 +6,6 @@ import SwiftUI
 /// Which optional map content is visible. Stored in settings and toggled from the Layers menu.
 struct MapLayers: Equatable {
     var imagery = true
-    /// Off draws only the course shapes on a plain background, which works without map tiles.
-    var mapUnderCourse = true
     var idealLine = true
     var bunkerDistances = false
     var dispersion = false
@@ -26,7 +24,6 @@ struct HoleMapView: View {
     @State private var visibleSize: CGSize = .zero
     @State private var requestedCamera: MapCamera?
     @State private var fitPassesRemaining = 0
-    @State private var isFramedOnHole = false
     @State private var chainDrag: (index: Int, coordinate: Coordinate)?
     @State private var aimDrag: Coordinate?
     @State private var dragging: MapTarget?
@@ -40,10 +37,6 @@ struct HoleMapView: View {
     var body: some View {
         MapReader { proxy in
             Map(position: $position, interactionModes: dragging == nil ? [.pan, .zoom, .rotate] : []) {
-                if !layers.mapUnderCourse, let center = store.hole.green ?? store.hole.orientation?.tee {
-                    MapPolygon(coordinates: Self.backgroundBox(around: center))
-                        .foregroundStyle(GolfMapPalette.courseBackground.color)
-                }
                 ForEach(store.mapOverlays) { overlay in
                     MapPolygon(coordinates: overlay.coordinates.map(\.clCoordinate))
                         .foregroundStyle(overlay.color.color.opacity(overlay.opacity))
@@ -104,11 +97,12 @@ struct HoleMapView: View {
                 MapScaleView()
             }
             .mapHandles(handles, proxy: proxy, dragging: $dragging, onTap: tapped, onMapTap: onTap, onDrag: dragged)
-            // The layout frame stops at the dock even though the map draws beneath it.
+            // The layout frame stops at the dock even though the map draws beneath it. Opening or closing the
+            // dock leaves the camera alone; refitting while the map resizes zoomed in on the wrong spot.
             .onGeometryChange(for: CGSize.self) { $0.size } action: { size in
                 let firstLayout = visibleSize == .zero
                 visibleSize = size
-                if firstLayout || isFramedOnHole || fitPassesRemaining > 0 { frameHole(animated: !firstLayout) }
+                if firstLayout || fitPassesRemaining > 0 { frameHole(animated: !firstLayout) }
             }
             .onMapCameraChange(frequency: .onEnd) { context in
                 refineHoleFit(camera: context.camera, proxy: proxy)
@@ -122,22 +116,10 @@ struct HoleMapView: View {
         }
     }
 
-    /// Course-only mode covers the imagery style because it has no labels; the standard style draws names above overlays.
     private var mapStyle: MapStyle {
-        layers.imagery || !layers.mapUnderCourse
+        layers.imagery
             ? .imagery(elevation: .flat)
             : .standard(elevation: .flat, emphasis: .muted, pointsOfInterest: .excludingAll)
-    }
-
-    /// About 11 km across: enough to cover the course at any zoom the round uses.
-    private static func backgroundBox(around center: Coordinate) -> [CLLocationCoordinate2D] {
-        let span = 0.05
-        return [
-            CLLocationCoordinate2D(latitude: center.latitude - span, longitude: center.longitude - span),
-            CLLocationCoordinate2D(latitude: center.latitude + span, longitude: center.longitude - span),
-            CLLocationCoordinate2D(latitude: center.latitude + span, longitude: center.longitude + span),
-            CLLocationCoordinate2D(latitude: center.latitude - span, longitude: center.longitude + span),
-        ]
     }
 
     // MARK: Planning and measuring
@@ -312,12 +294,8 @@ struct HoleMapView: View {
     /// MapKit's zoom for a camera distance depends on the view's size, so after the first guess
     /// measure where the tee and green landed and correct until the hole fills the visible area.
     private func refineHoleFit(camera: MapCamera, proxy: MapProxy) {
-        guard let requestedCamera, camera.isClose(to: requestedCamera) else {
-            // Mid-fit, MapKit can still report the previous camera. Otherwise a gesture moved the map,
-            // so stop keeping the hole framed through layout changes.
-            if fitPassesRemaining == 0 { isFramedOnHole = false }
-            return
-        }
+        // Mid-fit, MapKit can still report the previous camera; otherwise a gesture moved the map.
+        guard let requestedCamera, camera.isClose(to: requestedCamera) else { return }
         guard fitPassesRemaining > 0, visibleSize != .zero else { return }
         fitPassesRemaining -= 1
         guard let orientation = store.hole.orientation,
@@ -336,7 +314,6 @@ struct HoleMapView: View {
         let scale = distance / camera.distance
         if abs(scale - 1) < 0.06, hypot(middle.x - target.midX, middle.y - target.midY) < 12 {
             fitPassesRemaining = 0
-            isFramedOnHole = true
             return
         }
         // After zooming by `scale` about screen point c, p lands at anchor + (p - c) / scale.
@@ -350,7 +327,6 @@ struct HoleMapView: View {
             heading: camera.heading,
             pitch: 0
         )
-        if fitPassesRemaining == 0 { isFramedOnHole = true }
         move(to: next, animated: false)
     }
 

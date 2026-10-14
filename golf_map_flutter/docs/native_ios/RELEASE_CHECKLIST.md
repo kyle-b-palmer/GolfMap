@@ -34,7 +34,7 @@ Test names below are Swift Testing functions (`swift test` in `GolfKit`, scheme 
 | Front, middle, back; play area; rotation | `holeCalculationsMatch` | Outdoor dock review in sunlight and at large text |
 | Signed bunker distances, planned shots, ideal line | `holeCalculationsMatch` | — |
 | GPS states (searching, approximate, lost, off) | `gpsStatusClassification`, `gpsStatusOnlyAllowsCurrentPreciseFixes` | Deny access, turn off Precise Location, walk out of coverage |
-| Course-only rendering without tiles | Map under course off draws a background polygon | Airplane Mode on an uncached course |
+| Satellite or map style | One choice in Layers and Settings | Airplane Mode on an uncached course: the course shapes still draw |
 | Green close-up with draggable flag | UI `testGreenCloseUpFlagDrags` | Drag at several zooms and rotations |
 | GPS simulation (Developer) | Settings and round menu | — |
 
@@ -105,6 +105,6 @@ Run these on a paired iPhone and Apple Watch with a signed build:
 4. Watch: score and hole sync both ways, GPS pins and undo, swing detection and IMU transfer, complications, reconnecting after the Watch is offline, and a v1 Watch build against the native phone.
 5. Live Activity: Lock Screen and Dynamic Island content, score buttons reflected on the phone without opening it, ending when the round is saved, and a dismissed activity not discarding a restorable round.
 6. Health: permission prompt, denial, Ask prompt, and a golf workout in Health after saving.
-7. Offline: Airplane Mode on a course whose tiles were never cached, with Map under course off.
+7. Offline: Airplane Mode on a course whose tiles were never cached; the course shapes, pins, and yardages should still show.
 8. Measurements on one named iPhone model: cold launch to the course list, hole switch time, and battery over a fixed route, for both the Flutter and native builds.
 9. Once the Supabase project is restored: remote fallback with the bundled asset removed, and upload against designated test records, including a forced insert failure.

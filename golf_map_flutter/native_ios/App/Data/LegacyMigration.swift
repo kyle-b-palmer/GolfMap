@@ -86,7 +86,6 @@ struct LegacyMigration {
         setIfAbsent(preferences.autoAdvanceHole, SettingsKey.autoAdvanceHoles)
         setIfAbsent(preferences.showScoreTarget, SettingsKey.showScoreTarget)
         setIfAbsent(preferences.idealLineEnabled, SettingsKey.idealLineEnabled)
-        setIfAbsent(preferences.mapOverlayEnabled, SettingsKey.courseOverlaysEnabled)
         setIfAbsent(preferences.showShotDispersion, SettingsKey.showShotDispersion)
         // Flutter's home toggle overrode the mode for rounds started from home; native has the mode only.
         let healthMode = preferences.startHealthWorkoutWithRound ? preferences.healthWorkoutMode : .never

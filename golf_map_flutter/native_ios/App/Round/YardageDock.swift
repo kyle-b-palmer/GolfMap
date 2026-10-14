@@ -2,7 +2,7 @@ import GolfCore
 import GolfDesign
 import SwiftUI
 
-/// Bottom panel: yardage, club, score, and the shot action. Expands for tees, hazards, and shots.
+/// Bottom panel. Collapsed, it shows only the yardage; expanded, it adds the club, score, and shot actions.
 struct YardageDock: View {
     let store: RoundStore
     let gps: GPSStatus
@@ -42,6 +42,23 @@ struct YardageDock: View {
         VStack(spacing: GolfSpacing.s) {
             handle
             YardageReadout(middle: yardages?.middle, front: yardages?.front, back: yardages?.back, gps: gps)
+            if expanded {
+                scoring
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .padding(.horizontal, GolfSpacing.m)
+        .padding(.bottom, GolfSpacing.s)
+        .background(
+            UnevenRoundedRectangle(topLeadingRadius: GolfRadius.large, topTrailingRadius: GolfRadius.large, style: .continuous)
+                .fill(.golfSurface)
+                .shadow(color: .black.opacity(0.25), radius: 12, y: -2)
+                .ignoresSafeArea(edges: .bottom)
+        )
+    }
+
+    private var scoring: some View {
+        VStack(spacing: GolfSpacing.s) {
             Group {
                 if let recovery = gpsRecovery {
                     HStack(spacing: GolfSpacing.s) {
@@ -74,7 +91,7 @@ struct YardageDock: View {
             HStack(alignment: .top) {
                 ScoreStepper(
                     "Score",
-                    value: Binding(get: { store.round.currentScore }, set: { store.send(.setScore(hole: store.round.selectedHole, strokes: $0)) }),
+                    value: Binding(get: { store.displayedScore }, set: { store.setDisplayedScore($0) }),
                     in: 0...99,
                     detail: scoreDetail,
                     isEnabled: !store.round.isCurrentHoleLocked
@@ -87,34 +104,50 @@ struct YardageDock: View {
                     isEnabled: !store.round.isCurrentHoleLocked
                 )
             }
-            roundSummary
+            submitRow
             actionRow
-            if expanded {
-                details
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
+            roundSummary
         }
-        .padding(.horizontal, GolfSpacing.m)
-        .padding(.bottom, GolfSpacing.s)
-        .background(
-            UnevenRoundedRectangle(topLeadingRadius: GolfRadius.large, topTrailingRadius: GolfRadius.large, style: .continuous)
-                .fill(.golfSurface)
-                .shadow(color: .black.opacity(0.25), radius: 12, y: -2)
-                .ignoresSafeArea(edges: .bottom)
-        )
+    }
+
+    @ViewBuilder
+    private var submitRow: some View {
+        if store.round.isCurrentHoleLocked {
+            Button {
+                store.send(.setLocked(hole: store.round.selectedHole, locked: false))
+            } label: {
+                Label("Hole \(store.round.selectedHole) locked · Edit", systemImage: "lock.fill")
+                    .font(.body.weight(.semibold))
+                    .frame(maxWidth: .infinity, minHeight: GolfMetrics.minimumHitTarget)
+            }
+            .buttonStyle(.bordered)
+            .accessibilityLabel("Unlock hole \(store.round.selectedHole)")
+            .accessibilityHint("Unlocks the score and shots so you can change them")
+        } else {
+            Button {
+                store.submitScore()
+            } label: {
+                Label("Submit score · \(store.displayedScore)", systemImage: "checkmark.circle.fill")
+            }
+            .buttonStyle(.golfPrimary)
+            .keyboardShortcut(.defaultAction)
+            .accessibilityLabel("Submit score")
+            .accessibilityHint("Locks this hole's score and shots and moves to the next hole")
+        }
     }
 
     private var handle: some View {
         Button {
             withAnimation(.smooth) { expanded.toggle() }
         } label: {
-            Capsule()
-                .fill(.golfSeparator)
-                .frame(width: 40, height: 5)
-                .frame(maxWidth: .infinity, minHeight: 24)
+            Image(systemName: expanded ? "chevron.compact.down" : "chevron.compact.up")
+                .font(.title2.weight(.semibold))
+                .foregroundStyle(.golfSecondaryText)
+                .frame(maxWidth: .infinity, minHeight: 28)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier("dockHandle")
         .accessibilityLabel(expanded ? "Hide hole details" : "Show hole details")
         .gesture(DragGesture(minimumDistance: 12).onEnded { value in
             withAnimation(.smooth) { expanded = value.translation.height < 0 }
@@ -143,8 +176,11 @@ struct YardageDock: View {
             HStack(spacing: GolfSpacing.s) {
                 Button(action: onMarkShot) {
                     Label("Mark shot", systemImage: "mappin.and.ellipse")
+                        .font(.body.weight(.semibold))
+                        .frame(maxWidth: .infinity, minHeight: GolfMetrics.minimumHitTarget)
                 }
-                .buttonStyle(.golfPrimary)
+                .buttonStyle(.bordered)
+                .tint(GolfPalette.brand.color)
                 .disabled(origin == nil || store.round.isCurrentHoleLocked)
                 .accessibilityHint(origin == nil ? "Available within 1,200 yards of the hole" : "Pins your current location as the next shot")
 
@@ -204,60 +240,6 @@ struct YardageDock: View {
         if let shot = pin.shotYards { parts.append("\(shot) yd") }
         if let toPin = pin.yardsToPin { parts.append("\(toPin) to green") }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
-    }
-
-    private var details: some View {
-        VStack(alignment: .leading, spacing: GolfSpacing.m) {
-            if store.hole.tees.count > 1 {
-                Picker("Tees", selection: Binding(
-                    get: { store.round.preferredTeeLabel ?? store.hole.tees.first?.label ?? "" },
-                    set: { store.send(.setPreferredTee(label: $0)) }
-                )) {
-                    ForEach(store.hole.tees, id: \.label) { tee in
-                        Text(tee.label).tag(tee.label)
-                    }
-                }
-                .pickerStyle(.menu)
-            }
-
-            if let origin, gps.allowsYardage {
-                let bunkers = HoleGeometry.bunkerDistances(from: origin, store.hole.features)
-                if !bunkers.isEmpty {
-                    VStack(alignment: .leading, spacing: GolfSpacing.xxs) {
-                        Text("Hazards").font(GolfType.label).foregroundStyle(.golfSecondaryText)
-                        ForEach(Array(bunkers.prefix(4).enumerated()), id: \.offset) { _, bunker in
-                            HStack {
-                                Text(bunker.label)
-                                Spacer()
-                                Text(bunker.yards >= 0 ? "\(bunker.yards) yd" : "\(-bunker.yards) yd behind")
-                                    .monospacedDigit()
-                            }
-                            .foregroundStyle(.golfSand)
-                        }
-                    }
-                }
-            }
-
-            if !store.round.currentPins.isEmpty {
-                VStack(alignment: .leading, spacing: GolfSpacing.xxs) {
-                    Text("Shots").font(GolfType.label).foregroundStyle(.golfSecondaryText)
-                    ForEach(store.round.currentPins) { pin in
-                        Button {
-                            store.selectedPinID = pin.id
-                        } label: {
-                            HStack {
-                                Text(pin.pinType == .lostBall ? "\(pin.shotNumber). Lost ball" : "\(pin.shotNumber). Shot")
-                                Spacer()
-                                Text(pinDetail(pin) ?? "").monospacedDigit().foregroundStyle(.golfSecondaryText)
-                            }
-                            .frame(minHeight: GolfMetrics.minimumHitTarget)
-                        }
-                        .foregroundStyle(.golfPrimaryText)
-                    }
-                }
-            }
-        }
-        .font(.subheadline)
     }
 
     /// Strokes left for the target (Flutter's "LEFT n FOR m TO PLAY") and the round total, which opens the scorecard.

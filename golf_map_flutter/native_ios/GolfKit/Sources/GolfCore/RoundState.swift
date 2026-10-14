@@ -253,7 +253,7 @@ public enum RoundEngine {
             effects.append(.holeChanged(state.selectedHole))
 
         case let .addPin(hole, point, source, userLocation, yardsToPin, teeLabel):
-            if hole == state.selectedHole && state.isCurrentHoleLocked {
+            if state.lockedHoles.contains(hole) {
                 effects.append(.pinRejectedHoleLocked)
                 return RoundTransition(state: input, effects: effects, changed: false)
             }
@@ -351,6 +351,7 @@ public enum RoundEngine {
             }
 
         case let .applyRemoteUndo(hole, point, pinEventID):
+            guard !state.lockedHoles.contains(hole) else { break }
             var pins = state.sortedPins(hole)
             let index: Int?
             if let pinEventID {
