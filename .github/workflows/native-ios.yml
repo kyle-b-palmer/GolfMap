@@ -1,0 +1,83 @@
+name: Native iOS
+
+on:
+  push:
+    branches: [codex/ios-swiftui, main]
+    paths:
+      - golf_map_flutter/native_ios/**
+      - golf_map_flutter/assets/courses/**
+      - .github/workflows/native-ios.yml
+  pull_request:
+    paths:
+      - golf_map_flutter/native_ios/**
+      - golf_map_flutter/assets/courses/**
+      - .github/workflows/native-ios.yml
+  workflow_dispatch:
+
+concurrency:
+  group: native-ios-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: golf_map_flutter/native_ios
+
+jobs:
+  test:
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tools
+        run: |
+          xcodebuild -version
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Pick a simulator
+        run: |
+          id=$(xcrun simctl list devices available --json | python3 -c '
+          import json, sys
+          runtimes = json.load(sys.stdin)["devices"]
+          phones = [d for r, ds in sorted(runtimes.items()) if "iOS" in r for d in ds if d["name"].startswith("iPhone")]
+          print(phones[-1]["udid"])')
+          echo "SIMULATOR=$id" >> "$GITHUB_ENV"
+          xcrun simctl boot "$id" || true
+
+      - name: Package tests
+        run: cd GolfKit && swift test
+
+      - name: App tests
+        run: >
+          xcodebuild -project GolfMap.xcodeproj -scheme GolfMap
+          -destination "platform=iOS Simulator,id=$SIMULATOR"
+          -derivedDataPath DerivedData CODE_SIGNING_ALLOWED=NO test
+
+      - name: UI smoke tests
+        run: >
+          xcodebuild -project GolfMap.xcodeproj -scheme GolfMapUITests
+          -destination "platform=iOS Simulator,id=$SIMULATOR"
+          -derivedDataPath DerivedData -resultBundlePath UITests.xcresult
+          CODE_SIGNING_ALLOWED=NO test
+
+      - name: Watch app
+        run: >
+          xcodebuild -project GolfMap.xcodeproj -scheme GolfMapWatch
+          -destination "generic/platform=watchOS Simulator"
+          -derivedDataPath DerivedData CODE_SIGNING_ALLOWED=NO build
+
+      - name: Release archive
+        run: |
+          xcodebuild -project GolfMap.xcodeproj -scheme GolfMap -configuration Release \
+            -destination "generic/platform=iOS" -derivedDataPath DerivedData \
+            -archivePath "$RUNNER_TEMP/GolfMap.xcarchive" CODE_SIGNING_ALLOWED=NO archive
+          scripts/check_archive.sh "$RUNNER_TEMP/GolfMap.xcarchive"
+
+      - name: Keep UI test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-test-results
+          path: golf_map_flutter/native_ios/UITests.xcresult
+          if-no-files-found: ignore
