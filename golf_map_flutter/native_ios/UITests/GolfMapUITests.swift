@@ -46,10 +46,10 @@ final class GolfMapUITests: XCTestCase {
 
         app.buttons["Submit score"].tap()
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Hole 2'")).firstMatch.waitForExistence(timeout: timeout), "Submitting moves to the next hole")
-        app.buttons["Previous hole"].tap()
+        selectHole(app, "1")
         XCTAssertTrue(app.buttons["Unlock hole 1"].waitForExistence(timeout: timeout), "Submitting locks the hole")
         XCTAssertFalse(element(app, "Score").isEnabled)
-        app.buttons["Next hole"].tap()
+        selectHole(app, "2")
         increase(element(app, "Score"))
 
         endRound(app, choice: "Save round")
@@ -215,6 +215,15 @@ final class GolfMapUITests: XCTestCase {
         row.tap()
         app.buttons["Start at \(course)"].tap()
         allowLocationIfAsked(app)
+    }
+
+    /// Picks a hole from the header's hole menu, the only way to change holes besides Submit score.
+    private func selectHole(_ app: XCUIApplication, _ hole: String) {
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Hole '")).firstMatch.tap()
+        let item = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Hole \(hole) ·")).firstMatch
+        XCTAssertTrue(item.waitForExistence(timeout: timeout))
+        item.tap()
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Hole \(hole),")).firstMatch.waitForExistence(timeout: timeout))
     }
 
     private func endRound(_ app: XCUIApplication, choice: String) {

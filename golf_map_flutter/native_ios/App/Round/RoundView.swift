@@ -151,16 +151,14 @@ struct RoundView: View {
             }
             .accessibilityLabel("Courses")
 
-            Button { store.send(.previousHole) } label: {
-                Image(systemName: "chevron.left")
-                    .frame(width: GolfMetrics.minimumHitTarget, height: GolfMetrics.minimumHitTarget)
-            }
-            .accessibilityLabel("Previous hole")
-
             Menu {
                 Picker("Hole", selection: Binding(get: { store.round.selectedHole }, set: { store.send(.selectHole($0)) })) {
                     ForEach(store.round.holes, id: \.self) { hole in
-                        Text(holeMenuTitle(hole)).tag(hole)
+                        if store.round.lockedHoles.contains(hole) {
+                            Label(holeMenuTitle(hole), systemImage: "lock.fill").tag(hole)
+                        } else {
+                            Text(holeMenuTitle(hole)).tag(hole)
+                        }
                     }
                 }
             } label: {
@@ -184,12 +182,6 @@ struct RoundView: View {
             }
             .accessibilityLabel("Hole \(store.round.selectedHole), \(holeSubtitle)")
             .accessibilityHint("Choose a hole")
-
-            Button { store.send(.nextHole) } label: {
-                Image(systemName: "chevron.right")
-                    .frame(width: GolfMetrics.minimumHitTarget, height: GolfMetrics.minimumHitTarget)
-            }
-            .accessibilityLabel("Next hole")
 
             Menu {
                 Button(store.round.isCurrentHoleLocked ? "Unlock hole" : "Lock hole", systemImage: store.round.isCurrentHoleLocked ? "lock.open" : "lock") {
