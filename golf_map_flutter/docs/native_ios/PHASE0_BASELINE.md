@@ -9,7 +9,7 @@ This records the behavior the native app must reproduce, the defects found while
 | Parity fixtures | Done. `test/parity/export_parity_fixtures_test.dart` writes `native_ios/GolfKit/Tests/GolfCoreTests/Fixtures/parity_v1.json`. |
 | Swift parity | Done for calculations. Every exported value matches exactly, including 983 sample points across 90 holes. |
 | Feature inventory | Done (below). |
-| Decisions | Proposed defaults adopted (below). Revisit before Phase 7. |
+| Decisions | Proposed defaults adopted (below). Upgrade consequences (iOS 18.2 minimum, portrait-only iPhone) are listed in the release checklist. |
 | Screenshots of current flows | Pending. Needs the Flutter build on a physical iPhone. |
 | Baseline measurements | Pending. Needs a physical iPhone and a walked or simulated route. |
 | Wireframes | The active-round layout in the plan is the working direction. Validate it outdoors with the Phase 1 slice. |
@@ -34,79 +34,79 @@ Scoring, pins, and undo are covered by `RoundEngineTests`, which encode the Flut
 
 ## Feature inventory
 
-Each item must exist natively, or be explicitly dropped, before cutover.
+Each item must exist natively, or be explicitly dropped, before cutover. All of them exist in the native app; [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md) lists the evidence for each and what still needs hardware.
 
 **Home and catalog**
-- [ ] Search by state, city, and course name
-- [ ] Courses grouped by state and city
-- [ ] Up to five favorites
-- [ ] Commonly visited courses
-- [ ] Saved rounds list with open, reopen, and delete
-- [ ] Locally traced courses
-- [ ] Loading, error, and retry states
+- [x] Search by state, city, and course name
+- [x] Courses grouped by state and city
+- [x] Up to five favorites
+- [x] Commonly visited courses
+- [x] Saved rounds list with open, reopen, and delete
+- [x] Locally traced courses
+- [x] Loading, error, and retry states
 
 **Round setup and scoring**
-- [ ] Course, hole, and tee selection; preferred tee remembered
-- [ ] Par and handicap display
-- [ ] Score and putt entry with clamps (score 0–99, putts 0–9)
-- [ ] Total score, relative to par, current relative to par
-- [ ] Score target with strokes remaining
-- [ ] Hole locking, lock all on save
-- [ ] Auto-advance after more than 12 s on the green
-- [ ] Save, reopen, and delete rounds
+- [x] Course, hole, and tee selection; preferred tee remembered
+- [x] Par and handicap display
+- [x] Score and putt entry with clamps (score 0–99, putts 0–9)
+- [x] Total score, relative to par, current relative to par
+- [x] Score target with strokes remaining
+- [x] Hole locking, lock all on save
+- [x] Auto-advance after more than 12 s on the green
+- [x] Save, reopen, and delete rounds
 
 **Map and yardage**
-- [ ] Course polygons and hole lines
-- [ ] Tee-to-green rotation
-- [ ] GPS position and play-area check (45 m)
-- [ ] Green front, middle, and back
-- [ ] Signed bunker-edge distances
-- [ ] Planned shots and ideal line
-- [ ] Map background toggle
-- [ ] Green close-up with draggable target flag (`gps_to_green_screen.dart`)
-- [ ] GPS simulation (developer only)
+- [x] Course polygons and hole lines
+- [x] Tee-to-green rotation
+- [x] GPS position and play-area check (45 m)
+- [x] Green front, middle, and back
+- [x] Signed bunker-edge distances
+- [x] Planned shots and ideal line
+- [x] Map background toggle
+- [x] Green close-up with draggable target flag (`gps_to_green_screen.dart`)
+- [x] GPS simulation (developer only)
 
 **Shots and planning**
-- [ ] Shot pins from GPS and from the map
-- [ ] Lost-ball pins (adds a stroke)
-- [ ] Select, drag, delete (subtracts a stroke), and undo
-- [ ] Measurement chains
-- [ ] Club aim and shot direction
-- [ ] Historical shot dispersion
+- [x] Shot pins from GPS and from the map
+- [x] Lost-ball pins (adds a stroke)
+- [x] Select, drag, delete (subtracts a stroke), and undo
+- [x] Measurement chains
+- [x] Club aim and shot direction
+- [x] Historical shot dispersion
 
 **Club bag and weather**
-- [ ] Editable carry distances; default 13-club bag
-- [ ] Club suggestion with alternate club and driver eligibility
-- [ ] Wind, temperature, and elevation adjustments; cached weather with fallback to raw yardage
+- [x] Editable carry distances; default 13-club bag
+- [x] Club suggestion with alternate club and driver eligibility
+- [x] Wind, temperature, and elevation adjustments; cached weather with fallback to raw yardage
 
 **Course editor**
-- [ ] Pan, draw, walk, and edit modes
-- [ ] Vertex insert, drag, delete, and undo
-- [ ] Copy or move features between holes
-- [ ] Hole geometry and metadata editing
-- [ ] Import from bundled data, Supabase, and OSM, with ranking
-- [ ] Local save and delete; shared database upload; GeoJSON export
+- [x] Pan, draw, walk, and edit modes
+- [x] Vertex insert, drag, delete, and undo
+- [x] Copy or move features between holes
+- [x] Hole geometry and metadata editing
+- [x] Import from bundled data, Supabase, and OSM, with ranking
+- [x] Local save and delete; shared database upload; GeoJSON export
 
 **Sharing**
-- [ ] Scorecard and round-recap images with statistics
-- [ ] System share sheet
+- [x] Scorecard and round-recap images with statistics
+- [x] System share sheet
 
 **Apple Watch**
-- [ ] Score, putt, and hole sync
-- [ ] Local GPS yardage
-- [ ] Swing detection and IMU session transfer
-- [ ] GPS pin and undo transfer
-- [ ] Workout runtime session
-- [ ] Complications
+- [x] Score, putt, and hole sync
+- [x] Local GPS yardage
+- [x] Swing detection and IMU session transfer
+- [x] GPS pin and undo transfer
+- [x] Workout runtime session
+- [x] Complications
 
 **Live Activities**
-- [ ] Lock Screen and Dynamic Island yardage and score
-- [ ] Interactive intents
-- [ ] Lifecycle cleanup when a round ends
+- [x] Lock Screen and Dynamic Island yardage and score
+- [x] Interactive intents
+- [x] Lifecycle cleanup when a round ends
 
 **Apple Health**
-- [ ] Optional golf workout with availability and authorization checks
-- [ ] Start and end preferences
+- [x] Optional golf workout with availability and authorization checks
+- [x] Start and end preferences
 
 ## Decisions
 
