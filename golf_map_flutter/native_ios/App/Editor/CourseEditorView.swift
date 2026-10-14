@@ -161,7 +161,7 @@ struct CourseEditorView: View {
                     draggingVertex = (index, coordinate)
                 }
             }
-            .gesture(drawGesture(proxy), including: isDrawing ? .all : .subviews)
+            .simultaneousGesture(drawGesture(proxy), including: isDrawing ? .all : .subviews)
         }
     }
 
